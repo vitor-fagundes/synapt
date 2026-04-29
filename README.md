@@ -28,7 +28,7 @@ NodeApplication.cc/h     — Aplicação de cada nó sensor (beaconing, clusteri
 NodeAPApplication.cc/h   — Orquestrador AP: ciclo intuitivo, anomalias, órfãos
 IntuitiveLearning.cc/h   — Motor de aprendizado: DistributedLearning, DualSystem, KnowledgeNetworks
 AnomalyDetector.cc/h     — Detecção de anomalias por ensemble Z-score global + temporal
-capabilities.cc/h        — Vetores de capacidades e similaridade (Jaccard)
+capabilities.cc/h        — Vetores de capacidades e similaridade (Eq. 1 do artigo)
 task.cc/h                — Modelo de tarefas com capacidades requeridas e quorum
 constants.h              — Enum de tipos de mensagem
 MyTag.cc/h               — Tag NS-3 para identificação de mensagens UDP
