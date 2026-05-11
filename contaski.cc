@@ -53,6 +53,14 @@ int main (int argc, char *argv[]){
 	double multiFailurePercent = 30.0;      // Porcentagem de falha em cada onda
 	std::string failureTimesStr = "300,450,600"; // Tempos das ondas de falha (separados por vírgula)
 
+	// Cenário 5: Full random — N ondas com tempo e % sorteados por onda
+	bool randomFailures = false;            // Se true, ativa modo full random (mutuamente exclusivo com multipleFailures)
+	int  nFailureWaves = 3;                 // Número de ondas a sortear
+	double randFailureTimeMin = 200.0;      // Tempo mínimo do sorteio (s)
+	double randFailureTimeMax = 800.0;      // Tempo máximo do sorteio (s)
+	double randFailurePctMin = 10.0;        // % mínima do sorteio por onda
+	double randFailurePctMax = 30.0;        // % máxima do sorteio por onda
+
 	// Persistência do aprendizado intuitivo entre rodadas
 	std::string knowledgePath = "";  // Vazio = sem persistência
 
@@ -68,6 +76,12 @@ int main (int argc, char *argv[]){
 	cmd.AddValue ("multipleFailures", "Enable multiple sequential failures (scenario 4)", multipleFailures);
 	cmd.AddValue ("multiFailurePercent", "Failure percentage for each wave", multiFailurePercent);
 	cmd.AddValue ("failureTimes", "Comma-separated failure times (e.g. 300,450,600)", failureTimesStr);
+	cmd.AddValue ("randomFailures", "Enable full random failures (scenario 5): N waves with sampled time and percentage", randomFailures);
+	cmd.AddValue ("nFailureWaves", "Number of failure waves to sample in random mode", nFailureWaves);
+	cmd.AddValue ("randFailureTimeMin", "Minimum sampled failure time in seconds (random mode)", randFailureTimeMin);
+	cmd.AddValue ("randFailureTimeMax", "Maximum sampled failure time in seconds (random mode)", randFailureTimeMax);
+	cmd.AddValue ("randFailurePctMin", "Minimum sampled failure percentage per wave (random mode)", randFailurePctMin);
+	cmd.AddValue ("randFailurePctMax", "Maximum sampled failure percentage per wave (random mode)", randFailurePctMax);
 	cmd.AddValue ("knowledgePath", "Path to intuitive knowledge file (load/save between runs)", knowledgePath);
 	cmd.Parse (argc,argv);
 
@@ -173,8 +187,20 @@ int main (int argc, char *argv[]){
 	apApplication->setDecisionInterval(decisionInterval);
 	apApplication->setKnowledgePath(knowledgePath);
 
-	// Cenário 4: Configurar múltiplas falhas sequenciais
-	if(multipleFailures){
+	// Cenário 4: Configurar múltiplas falhas sequenciais (% fixa, tempos explícitos)
+	// Cenário 5: Full random tem prioridade sobre cenário 4 quando ambos são solicitados
+	if(randomFailures){
+		apApplication->setRandomFailures(nFailureWaves,
+		                                 randFailureTimeMin, randFailureTimeMax,
+		                                 randFailurePctMin, randFailurePctMax);
+		NS_LOG_INFO("CENARIO5: " << nFailureWaves << " ondas de falha sorteadas em t=["
+		            << randFailureTimeMin << "," << randFailureTimeMax << "]s, %=["
+		            << randFailurePctMin << "," << randFailurePctMax << "]");
+		if(multipleFailures){
+			NS_LOG_INFO("CENARIO5: ignorando --multipleFailures (mutuamente exclusivo)");
+		}
+	}
+	else if(multipleFailures){
 		// Parsear tempos de falha da string "300,450,600"
 		std::vector<double> parsedTimes;
 		std::stringstream timeSS(failureTimesStr);

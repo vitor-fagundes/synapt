@@ -169,7 +169,7 @@ namespace nr2 {
             // Estímulo ambiental: penalidade se anômalo, bônus se vizinhos saudáveis
             double envStimulus = 0.0;
             if (anomalousNodes.count(addr) > 0) {
-                envStimulus = -0.05;
+                envStimulus = m_xiAnomalous;
             } else if (totalNeighCount > 0) {
                 envStimulus = 0.01 * (double)aliveNeighCount / (double)totalNeighCount;
             }
@@ -354,7 +354,7 @@ namespace nr2 {
             double qi, double sr, double pThreat,
             OrphanState orphanState) {
 
-        if (pThreat > THRESHOLD_S1) {
+        if (pThreat > thresholdS1) {
             // Ameaça alta → System 1 (resposta imediata baseada em experiência)
             IntuitiveAction action = system1Response(knowledge, orphanState);
             return std::make_pair(action, SYSTEM_S1);

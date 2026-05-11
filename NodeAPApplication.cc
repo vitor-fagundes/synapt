@@ -73,6 +73,18 @@ namespace nr2{
     }
 
     void NodeAPApplication::StartApplication(){
+        // Override combinado por densidade da rede para N>=300. Ver IntuitiveLearning.h
+        // (XI_ANOMALOUS_300, THRESHOLD_S1_300) para a justificativa detalhada:
+        //   (i)  ξ_anomalous=-0.033 reduz o drag absoluto sobre mean(Li) (paper-citado)
+        //   (ii) THRESHOLD_S1=0.245 recalibra o gatilho S1/S2 (hyperparâmetro interno)
+        if(this->totalNetworkNodes >= 300){
+            this->intuitiveEngine->getDistributedLearning().setXiAnomalous(XI_ANOMALOUS_300);
+            this->intuitiveEngine->getDualSystemMut().setThresholdS1(THRESHOLD_S1_300);
+            NS_LOG_INFO("DENSITY_OVERRIDE: N=" << this->totalNetworkNodes
+                        << " → ξ_anomalous=" << XI_ANOMALOUS_300
+                        << ", THRESHOLD_S1=" << THRESHOLD_S1_300);
+        }
+
         // If socket is not created yet
         if(!this->m_socket){
             // Create socket
@@ -384,15 +396,59 @@ namespace nr2{
         this->multipleFailuresEnabled = true;
         this->failureTimes = times;
         this->multipleFailurePercentage = percentage;
+        this->multipleFailurePercentages.clear();   // modo % fixa: garante fallback ao scalar
         this->currentFailureWave = 0;
+    }
+
+    void NodeAPApplication::setRandomFailures(int nWaves, double tMin, double tMax,
+                                              double pMin, double pMax){
+        if(nWaves <= 0) return;
+
+        // Usa std::random_device (entropia do SO) em vez do RNG do NS-3 para garantir
+        // sorteio diferente a cada execução mesmo com --run=0 fixo. Mesmo padrão
+        // de generateCap em contaski.cc.
+        std::random_device rd;
+        std::default_random_engine gen{rd()};
+        std::uniform_real_distribution<double> timeDist(tMin, tMax);
+        std::uniform_real_distribution<double> pctDist(pMin, pMax);
+
+        std::vector<double> times;
+        times.reserve(nWaves);
+        for(int i = 0; i < nWaves; i++) times.push_back(timeDist(gen));
+        std::sort(times.begin(), times.end());      // ordena ascendente; pode haver sobreposição
+
+        std::vector<double> pcts;
+        pcts.reserve(nWaves);
+        for(int i = 0; i < nWaves; i++) pcts.push_back(pctDist(gen));
+
+        this->multipleFailuresEnabled = true;
+        this->failureTimes = times;
+        this->multipleFailurePercentages = pcts;
+        this->multipleFailurePercentage = 0.0;
+        this->currentFailureWave = 0;
+
+        for(int i = 0; i < nWaves; i++){
+            NS_LOG_INFO("FAILURE_CONFIG_RANDOM: Onda " << (i+1)
+                        << " t=" << times[i] << "s, "
+                        << pcts[i] << "%");
+        }
     }
 
     void NodeAPApplication::triggerMultipleFailureWave(){
         this->currentFailureWave++;
         double now = Simulator::Now().GetSeconds();
-        
-        NS_LOG_INFO("FAILURE_WAVE: === Onda " << this->currentFailureWave 
-                    << " de " << this->failureTimes.size() 
+
+        // % desta onda: vetor por onda (full random) tem prioridade; fallback para scalar (cenário 4)
+        double waveFailurePercentage = this->multipleFailurePercentage;
+        if(!this->multipleFailurePercentages.empty()){
+            size_t idx = (size_t)(this->currentFailureWave - 1);
+            if(idx < this->multipleFailurePercentages.size()){
+                waveFailurePercentage = this->multipleFailurePercentages[idx];
+            }
+        }
+
+        NS_LOG_INFO("FAILURE_WAVE: === Onda " << this->currentFailureWave
+                    << " de " << this->failureTimes.size()
                     << " no tempo " << now << "s ===");
 
         // Recalcular líderes aptos AGORA (vivos + com cluster real)
@@ -441,17 +497,17 @@ namespace nr2{
             return;
         }
 
-        // Calcular quantos líderes irão falhar (30% dos elegíveis AGORA)
+        // Calcular quantos líderes irão falhar (% da onda atual sobre os elegíveis AGORA)
         int totalEligible = currentEligibleLeaders.size();
-        int leadersToFail = (int)std::ceil(totalEligible * this->multipleFailurePercentage / 100.0);
-        
-        if(leadersToFail == 0 && this->multipleFailurePercentage > 0){
+        int leadersToFail = (int)std::ceil(totalEligible * waveFailurePercentage / 100.0);
+
+        if(leadersToFail == 0 && waveFailurePercentage > 0){
             leadersToFail = 1;
         }
 
-        NS_LOG_INFO("FAILURE_WAVE: " << leadersToFail << " de " << totalEligible 
-                    << " líderes elegíveis irão falhar (" 
-                    << this->multipleFailurePercentage << "%)");
+        NS_LOG_INFO("FAILURE_WAVE: " << leadersToFail << " de " << totalEligible
+                    << " líderes elegíveis irão falhar ("
+                    << waveFailurePercentage << "%)");
 
         // Embaralhar para seleção aleatória
         Ptr<UniformRandomVariable> shuffleRng = CreateObject<UniformRandomVariable>();

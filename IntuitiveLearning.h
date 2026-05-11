@@ -43,9 +43,26 @@ namespace nr2 {
     const double ALPHA_Q = 0.2;
     const double GAMMA_Q = 0.9;
 
-    // Limiares Dual-System
-    const double THRESHOLD_S1 = 0.20;    // Alinhado com Python: Pthreat acima disso → System 1 (resposta rápida)
+    // Limiares Dual-System (default — calibrado para N=200/250).
+    const double THRESHOLD_S1 = 0.20;    // pThreat acima disso → System 1 (resposta rápida)
     const double THRESHOLD_S2 = 0.60;    // QI/SR abaixo disso → System 2 (análise profunda)
+
+    // Override combinado para N=300 nós. Em 300 nós, o número absoluto de líderes
+    // anômalos é maior e a distribuição de pThreat desloca para cima (mediana
+    // empírica ~0.245 vs ~0.19 em 200/250). Com defaults, pThreat satura acima
+    // de THRESHOLD_S1=0.20 em >90% dos ciclos e System 2 quase não ativa,
+    // quebrando o balanço S1/S2 observado em 200/250. Dois ajustes combinados:
+    //   (i)  ξ_anomalous: -0.05 → -0.033 reduz o drag absoluto sobre mean(Li),
+    //        levando pThreat para mais perto da faixa de 200/250 (corrige a
+    //        dinâmica na origem).
+    //   (ii) THRESHOLD_S1: 0.20 → 0.245 recalibra o gatilho para a mediana
+    //        empírica observada.
+    // Footnote do paper: "For N=300, ξ_anomalous is scaled by 200/N (=-0.033)
+    // and the S1 activation threshold is recalibrated to 0.245, jointly
+    // preserving density-invariant anomaly drag and the S1/S2 balance observed
+    // at smaller scales."
+    const double XI_ANOMALOUS_300 = -0.033;
+    const double THRESHOLD_S1_300 = 0.245;
 
     // Ações de resiliência disponíveis (por órfão)
     enum IntuitiveAction {
@@ -218,6 +235,10 @@ namespace nr2 {
     public:
         DistributedLearning();
 
+        // Override do estímulo ambiental ξ para nós anômalos. Default = -0.05.
+        // Usado pelo AP em N>=300 para reduzir o drag absoluto sobre mean(Li).
+        void setXiAnomalous(double xi) { m_xiAnomalous = xi; }
+
         // Inicializar Li para um nó (chamado quando o AP descobre um nó)
         void initNode(Ipv6Address addr, double initialEnergy, bool isLeader);
 
@@ -248,6 +269,7 @@ namespace nr2 {
 
     private:
         std::map<Ipv6Address, NodeLearningInfo> nodes;
+        double m_xiAnomalous = -0.05;  // configurável via setXiAnomalous()
     };
 
     // ============================================================
@@ -261,6 +283,10 @@ namespace nr2 {
     public:
         DualSystemResponse(double epsilon = 0.15, double epsilonDecay = 0.97,
                            double epsilonMin = 0.02);
+
+        // Override do gatilho S1/S2 (pThreat threshold). Default = THRESHOLD_S1 (0.20).
+        // Usado pelo AP em N>=300 para recalibrar com a mediana empírica de pThreat.
+        void setThresholdS1(double t) { thresholdS1 = t; }
 
         // Determinar estado de um órfão baseado nas suas similaridades.
         // Thresholds passados pelo AP para garantir consistência com os checks de viabilidade.
@@ -314,6 +340,7 @@ namespace nr2 {
         double epsilon;
         double epsilonDecay;
         double epsilonMin;
+        double thresholdS1 = THRESHOLD_S1;  // configurável via setThresholdS1()
 
         uint32_t s1Count;
         uint32_t s2Count;

@@ -42,7 +42,8 @@ namespace nr2{
             // Cenário 4: Múltiplas falhas sequenciais na mesma rodada
             bool                    multipleFailuresEnabled;    // Se true, usa failureTimes[]
             std::vector<double>     failureTimes;               // Tempos das falhas (ex: 300, 450, 600)
-            double                  multipleFailurePercentage;  // Porcentagem fixa para cada falha
+            double                  multipleFailurePercentage;  // Porcentagem fixa para cada falha (modo cenário 4)
+            std::vector<double>     multipleFailurePercentages; // Porcentagem por onda (modo full random); vazio = usa scalar acima
             int                     currentFailureWave;         // Contador de qual onda de falha estamos
 
             // ============================================================
@@ -103,6 +104,10 @@ namespace nr2{
             // Cenário 4: Múltiplas falhas sequenciais
             void setMultipleFailures(std::vector<double> times, double percentage);
             void triggerMultipleFailureWave();
+
+            // Cenário 5: Full random — N ondas, tempos sorteados em [tMin,tMax],
+            // % sorteada por onda em [pMin,pMax]. Ondas podem se sobrepor (caso de stress).
+            void setRandomFailures(int nWaves, double tMin, double tMax, double pMin, double pMax);
 
             // ============================================================
             // Aprendizado Intuitivo — Métodos de integração

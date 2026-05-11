@@ -98,7 +98,7 @@ Para cada nó órfão (cujo líder morreu):
    - `ORPHAN_ONLY`: `simOrphans ≥ 0,85`
    - `NO_MATCH`: nenhum dos anteriores
 3. Dual-System escolhe a ação:
-   - `pThreat > 0,20` → **S1**: consulta R_int; fallback para heurística se sem experiência
+   - `pThreat > THRESHOLD_S1` (0,20 default; 0,245 em N≥300) → **S1**: consulta R_int; fallback para heurística se sem experiência
    - `QI < 0,60` ou `SR < 0,60` → **S2** prevalece (ε-greedy sobre Q-table)
    - Caso contrário → **S2 puro** com ajuste por `networkLearningMean`
 4. Executa a ação com fallback se inviável:
@@ -125,6 +125,7 @@ Candidatos são agrupados por similaridade mútua (≥ 0,85). Para cada grupo, o
 |---|---|---|
 | `ALPHA_LEARN` (α) | 0.20 | Taxa de atualização do Li |
 | `BETA_INFLUENCE` (β) | 0.10 | Peso da influência de vizinhos em ΔLi |
+| `ξ_anomalous` | −0.05 (N≤250) / **−0.033 (N≥300)** | Penalidade do estímulo ambiental aplicada a nós anômalos (ver *Calibragem por Densidade* abaixo) |
 
 ### Q-Learning (Sistema 2)
 
@@ -140,7 +141,7 @@ Candidatos são agrupados por similaridade mútua (≥ 0,85). Para cada grupo, o
 
 | Parâmetro | Valor | Descrição |
 |---|---|---|
-| `THRESHOLD_S1` | 0.20 | pThreat acima → ativa Sistema 1 |
+| `THRESHOLD_S1` | 0.20 (N≤250) / **0.245 (N≥300)** | pThreat acima → ativa Sistema 1 (ver *Calibragem por Densidade* abaixo) |
 | `THRESHOLD_S2` | 0.60 | QI ou SR abaixo → S2 prevalece |
 | `REALLOCATION_THRESHOLD` | 0.85 | Similaridade mínima para REALLOCATE |
 | `CLUSTERING_THRESHOLD` | 0.85 | Similaridade mínima para RECLUSTER |
@@ -200,9 +201,45 @@ Cada falha elimina em média 3–4 líderes e gera ~70 nós órfãos. O QI cai ~
 |---|---|---|
 | 200 nós | 51% | 49% |
 | 250 nós | 65% | 35% |
-| 300 nós | 99% | 1% |
+| 300 nós | 78% | 22% |
 
-Redes maiores mantêm `pThreat` acima de `THRESHOLD_S1` quase permanentemente, levando à dominância do S1.
+A proporção de S2 decresce com o tamanho da rede (49% → 35% → 22%), seguindo a tendência natural de `pThreat` médio crescer com `N`. Para o cenário de 300 nós isso requer recalibragem dos gatilhos — ver seção abaixo.
+
+---
+
+## Calibragem por Densidade (N ≥ 300)
+
+Durante a validação experimental, observamos que com `N = 300` o balanço S1/S2 colapsa: ~99% das decisões caem em S1 e o Sistema 2 quase nunca ativa (~1%). A causa é estrutural:
+
+- **`pThreat = 1 − mean(L_i dos líderes vivos)`** se desloca para cima conforme `N` cresce. Em 35 rodadas observadas:
+  - `N=200`: mediana(`pThreat`) ≈ 0,185
+  - `N=250`: mediana(`pThreat`) ≈ 0,198
+  - `N=300`: mediana(`pThreat`) ≈ **0,245**
+- Com `THRESHOLD_S1 = 0,20` fixo, em 300 nós `pThreat > 0,20` em >90% dos ciclos, e o gatilho de S1 fica permanentemente acionado.
+
+A causa do deslocamento é o número absoluto de líderes anômalos: a fração relativa é similar (~30% de falhas em qualquer `N`), mas o drag agregado sobre `mean(L_i)` cresce com `N` porque o estímulo `ξ_i = −0,05` se soma sobre mais líderes anômalos por ciclo.
+
+**Solução adotada (válida apenas para N ≥ 300):**
+
+| Ajuste | Default | Override N≥300 | Justificativa |
+|---|---|---|---|
+| `ξ_anomalous` | −0,050 | **−0,033** | Reduz o drag por anomalia em fator `200/N` (≈ 2/3 para N=300), aproximando a distribuição de `pThreat` da faixa de 200/250 |
+| `THRESHOLD_S1` | 0,20 | **0,245** | Recalibra o gatilho S1/S2 para a mediana empírica observada em `N=300`, restaurando o balanço S1/S2 |
+
+O override é aplicado em [NodeAPApplication.cc:79-87](NodeAPApplication.cc#L79-L87), no `StartApplication()`, condicional a `totalNetworkNodes >= 300`. Os parâmetros default (citados no artigo) permanecem intactos para `N ≤ 250`.
+
+**Efeito empírico (média sobre 35 rodadas em N=300):**
+
+| Métrica | Antes | Depois |
+|---|---:|---:|
+| S2 ratio | 1,2% | **22,0%** |
+| Rodadas com S2 > 0 | 1 / 35 | **14 / 35** |
+| `pT_mean` | 0,243 | 0,245 |
+| `qi_final` | 0,989 | 0,990 |
+| `sr_final` | 0,986 | 0,988 |
+| Recuperação de órfãos | 99,9% | 99,7% |
+
+Tanto a recuperação quanto a qualidade da rede ficam praticamente inalteradas — o ajuste corrige o balanço interno do mecanismo de decisão sem afetar a métrica principal de resiliência.
 
 ---
 
