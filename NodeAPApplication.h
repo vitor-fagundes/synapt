@@ -46,6 +46,9 @@ namespace nr2{
             std::vector<double>     multipleFailurePercentages; // Porcentagem por onda (modo full random); vazio = usa scalar acima
             int                     currentFailureWave;         // Contador de qual onda de falha estamos
 
+            // v2: modo de falha — "leader" (v1, default) ou "member" (v2)
+            std::string             failureMode;
+
             // ============================================================
             // Aprendizado Intuitivo — Módulos 1-5
             // ============================================================
@@ -77,6 +80,12 @@ namespace nr2{
             // Consumida por RECLUSTER para formar novos clusters
             std::vector<Ipv6Address>    pendingOrphans;
 
+            // v2: snapshot do MULTI-SET de capabilities por cluster no momento da formação
+            // (count por cap, não só set). Permite computar redundância:
+            // capability_redundancy = média_cap(count_atual / count_original)
+            // Captura perda gradual de redundância (vs. perda terminal de presença).
+            std::map<Ipv6Address, std::map<capabilities, int>>   originalClusterCapsCount;
+
             // Caminho para o arquivo de conhecimento persistente entre rodadas
             std::string                 knowledgePath;
 
@@ -105,6 +114,10 @@ namespace nr2{
             void setMultipleFailures(std::vector<double> times, double percentage);
             void triggerMultipleFailureWave();
 
+            // v2: falha em nó-membro (estratégia A — pool global, sorteio uniforme)
+            void setFailureMode(const std::string& mode) { this->failureMode = mode; }
+            void triggerMemberFailureWave();
+
             // Cenário 5: Full random — N ondas, tempos sorteados em [tMin,tMax],
             // % sorteada por onda em [pMin,pMax]. Ondas podem se sobrepor (caso de stress).
             void setRandomFailures(int nWaves, double tMin, double tMax, double pMin, double pMax);
@@ -127,6 +140,12 @@ namespace nr2{
             
             // Processar órfãos com decisão individual por órfão (S1/S2 + Q-Table 3×3)
             void processOrphansIntuitively(IntuitiveSnapshot& snap);
+
+            // v2: processar clusters degradados (passo [5b] do ciclo intuitivo)
+            void processClusterDegradationIntuitively(IntuitiveSnapshot& snap);
+
+            // v2: dump do ranking de risco (Li ascendente) por ciclo
+            void dumpRiskRanking(double timestamp);
             
             // Construir vetor de ClusterInfo a partir do mapa
             std::vector<ClusterInfo> buildClusterInfoVector() const;

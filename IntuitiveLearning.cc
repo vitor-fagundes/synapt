@@ -420,6 +420,162 @@ namespace nr2 {
     }
 
     // ============================================================
+    // v2 — ClusterDualSystemResponse
+    // Q-table 3×3 (HEALTHY/DEGRADED/CRITICAL × DO_NOTHING/REINFORCE/DISBAND)
+    // Estrutura espelha DualSystemResponse mas o domínio é o cluster degradado.
+    // ============================================================
+
+    ClusterDualSystemResponse::ClusterDualSystemResponse(double epsilon,
+                                                         double epsilonDecay,
+                                                         double epsilonMin)
+        : epsilon(epsilon), epsilonDecay(epsilonDecay), epsilonMin(epsilonMin),
+          s1Count(0), s2Count(0) {
+        for (int s = 0; s < CLUSTER_DEGRADED_STATE_COUNT; s++) {
+            for (int a = 0; a < CLUSTER_ACTION_COUNT; a++) {
+                Q[s][a] = 0.0;
+            }
+        }
+        m_uniformRng = CreateObject<UniformRandomVariable>();
+        m_uniformRng->SetAttribute("Min", DoubleValue(0.0));
+        m_uniformRng->SetAttribute("Max", DoubleValue(1.0));
+        m_actionRng = CreateObject<UniformRandomVariable>();
+        m_actionRng->SetAttribute("Min", DoubleValue(0.0));
+        m_actionRng->SetAttribute("Max", DoubleValue(CLUSTER_ACTION_COUNT - 0.001));
+    }
+
+    ClusterDegradedState ClusterDualSystemResponse::determineState(
+            double capabilityCoverage, double memberLossRate) {
+        // Dois sinais ortogonais: perda de redundância e perda de massa.
+        // CRITICAL exige ambos os sinais; DEGRADED apenas um.
+        bool coverageBad = (capabilityCoverage < CLUSTER_COVERAGE_THRESHOLD);
+        bool lossBad     = (memberLossRate    > CLUSTER_MEMBER_LOSS_THRESHOLD);
+
+        if (coverageBad && lossBad) return CLUSTER_CRITICAL;
+        if (coverageBad || lossBad) return CLUSTER_DEGRADED;
+        return CLUSTER_HEALTHY;
+    }
+
+    ClusterAction ClusterDualSystemResponse::system1Response(
+            const KnowledgeNetworks& knowledge,
+            ClusterDegradedState clusterState) {
+        s1Count++;
+
+        // Consulta Rintuitive em bucket dedicado para clusters (prefixo "CL_")
+        // para não colidir com buckets de órfãos.
+        std::string bucket = std::string("CL_") + ClusterDegradedStateNames[clusterState];
+        int intuitive = knowledge.bestIntuitiveAction(bucket);
+
+        if (intuitive >= 0 && intuitive < CLUSTER_ACTION_COUNT) {
+            return static_cast<ClusterAction>(intuitive);
+        }
+
+        // Heurística estática (bootstrap)
+        switch (clusterState) {
+            case CLUSTER_DEGRADED:  return CLUSTER_REINFORCE;
+            case CLUSTER_CRITICAL:  return CLUSTER_DISBAND;
+            case CLUSTER_HEALTHY:
+            default:                return CLUSTER_DO_NOTHING;
+        }
+    }
+
+    ClusterAction ClusterDualSystemResponse::system2Response(
+            ClusterDegradedState clusterState,
+            const DistributedLearning& distLearn) {
+        s2Count++;
+        int s = static_cast<int>(clusterState);
+
+        if (m_uniformRng->GetValue() < epsilon) {
+            return static_cast<ClusterAction>((int)m_actionRng->GetValue());
+        }
+
+        double netLearning = distLearn.networkLearningMean();
+        std::map<int, double> adjustedQ;
+        for (int a = 0; a < CLUSTER_ACTION_COUNT; a++) {
+            adjustedQ[a] = Q[s][a] + 0.1 * netLearning *
+                           (a != CLUSTER_DO_NOTHING ? 1.0 : 0.0);
+        }
+
+        // Penalizar DO_NOTHING quando há sinal de problema
+        if (clusterState == CLUSTER_DEGRADED || clusterState == CLUSTER_CRITICAL) {
+            adjustedQ[CLUSTER_DO_NOTHING] -= 0.5;
+        }
+        // DISBAND é caro: penalizar quando estado ainda permite recuperar
+        if (clusterState == CLUSTER_DEGRADED) {
+            adjustedQ[CLUSTER_DISBAND] -= 0.3;
+        }
+
+        int bestAction = CLUSTER_DO_NOTHING;
+        double bestValue = adjustedQ[0];
+        for (int a = 1; a < CLUSTER_ACTION_COUNT; a++) {
+            if (adjustedQ[a] > bestValue) {
+                bestValue = adjustedQ[a];
+                bestAction = a;
+            }
+        }
+        return static_cast<ClusterAction>(bestAction);
+    }
+
+    std::pair<ClusterAction, SystemUsed> ClusterDualSystemResponse::chooseActionForCluster(
+            const KnowledgeNetworks& knowledge,
+            const DistributedLearning& distLearn,
+            double qi, double sr, double pThreat,
+            ClusterDegradedState clusterState) {
+
+        if (pThreat > thresholdS1) {
+            ClusterAction action = system1Response(knowledge, clusterState);
+            return std::make_pair(action, SYSTEM_S1);
+        } else if (qi < THRESHOLD_S2 || sr < THRESHOLD_S2) {
+            ClusterAction action = system2Response(clusterState, distLearn);
+            return std::make_pair(action, SYSTEM_S1_S2);
+        } else {
+            ClusterAction action = system2Response(clusterState, distLearn);
+            return std::make_pair(action, SYSTEM_S2);
+        }
+    }
+
+    void ClusterDualSystemResponse::updateQForCluster(ClusterDegradedState state,
+                                                      ClusterAction action,
+                                                      double reward) {
+        int s = static_cast<int>(state);
+        int a = static_cast<int>(action);
+
+        double maxQ = -std::numeric_limits<double>::infinity();
+        for (int nextA = 0; nextA < CLUSTER_ACTION_COUNT; nextA++) {
+            if (Q[s][nextA] > maxQ) maxQ = Q[s][nextA];
+        }
+
+        double oldQ = Q[s][a];
+        Q[s][a] = (1.0 - ALPHA_Q) * oldQ + ALPHA_Q * (reward + GAMMA_Q * maxQ);
+    }
+
+    void ClusterDualSystemResponse::decayEpsilon() {
+        epsilon = std::max(epsilonMin, epsilon * epsilonDecay);
+    }
+
+    double ClusterDualSystemResponse::getQValue(ClusterDegradedState s,
+                                                ClusterAction a) const {
+        auto sit = Q.find(static_cast<int>(s));
+        if (sit != Q.end()) {
+            auto ait = sit->second.find(static_cast<int>(a));
+            if (ait != sit->second.end()) return ait->second;
+        }
+        return 0.0;
+    }
+
+    double ClusterDualSystemResponse::getQValueAvg(ClusterAction a) const {
+        int aI = static_cast<int>(a);
+        double sum = 0.0;
+        for (int s = 0; s < CLUSTER_DEGRADED_STATE_COUNT; s++) {
+            auto sit = Q.find(s);
+            if (sit != Q.end()) {
+                auto ait = sit->second.find(aI);
+                if (ait != sit->second.end()) sum += ait->second;
+            }
+        }
+        return sum / CLUSTER_DEGRADED_STATE_COUNT;
+    }
+
+    // ============================================================
     // MÓDULO 5 — Métricas de Intuição
     // ============================================================
 
@@ -669,6 +825,19 @@ namespace nr2 {
         snap.qReallocate = dualSys.getQValueAvg(REALLOCATE_TO_EXISTING);
         snap.qRecluster = dualSys.getQValueAvg(RECLUSTER_ORPHANS);
 
+        // v2: campos da decisão por cluster (preenchidos pelo AP em [5b])
+        snap.clustersHealthy = 0;
+        snap.clustersDegraded = 0;
+        snap.clustersCritical = 0;
+        snap.actionsClusterDoNothing = 0;
+        snap.actionsReinforce = 0;
+        snap.actionsDisband = 0;
+        snap.cycleS1ClusterCount = 0;
+        snap.cycleS2ClusterCount = 0;
+        snap.qClusterDoNothing = clusterDualSys.getQValueAvg(CLUSTER_DO_NOTHING);
+        snap.qReinforce = clusterDualSys.getQValueAvg(CLUSTER_REINFORCE);
+        snap.qDisband = clusterDualSys.getQValueAvg(CLUSTER_DISBAND);
+
         // NÃO push_back ainda — o AP preencherá os contadores e fará push
 
         NS_LOG_UNCOND("INTUITIVE: t=" << currentTime
@@ -745,6 +914,28 @@ namespace nr2 {
         out << s1Count << "," << s2Count << std::endl;
     }
 
+    void ClusterDualSystemResponse::saveToStream(std::ofstream& out) const {
+        out << "[QTABLE_CLUSTER]" << std::endl;
+        out << "# state,action,q_value" << std::endl;
+        for (int s = 0; s < CLUSTER_DEGRADED_STATE_COUNT; s++) {
+            for (int a = 0; a < CLUSTER_ACTION_COUNT; a++) {
+                auto sit = Q.find(s);
+                double val = 0.0;
+                if (sit != Q.end()) {
+                    auto ait = sit->second.find(a);
+                    if (ait != sit->second.end()) val = ait->second;
+                }
+                out << s << "," << a << "," << val << std::endl;
+            }
+        }
+        out << "[EPSILON_CLUSTER]" << std::endl;
+        out << "# epsilon" << std::endl;
+        out << epsilon << std::endl;
+        out << "[COUNTERS_CLUSTER]" << std::endl;
+        out << "# s1count,s2count" << std::endl;
+        out << s1Count << "," << s2Count << std::endl;
+    }
+
     // ============================================================
     // Persistência — IntuitiveLearningEngine (orquestrador)
     // ============================================================
@@ -758,6 +949,7 @@ namespace nr2 {
 
         knowledge.saveToStream(out);
         dualSys.saveToStream(out);
+        clusterDualSys.saveToStream(out);
 
         out.close();
         NS_LOG_UNCOND("INTUITIVE_PERSIST: Conhecimento salvo em " << path);
@@ -828,6 +1020,24 @@ namespace nr2 {
                 std::getline(ss, tok, ','); uint32_t s1 = std::stoul(tok);
                 std::getline(ss, tok, ','); uint32_t s2 = std::stoul(tok);
                 dualSys.loadCounters(s1, s2);
+            }
+            else if (section == "[QTABLE_CLUSTER]") {
+                std::stringstream ss(line);
+                std::string tok;
+                std::getline(ss, tok, ','); int s = std::stoi(tok);
+                std::getline(ss, tok, ','); int a = std::stoi(tok);
+                std::getline(ss, tok, ','); double val = std::stod(tok);
+                clusterDualSys.loadQValue(s, a, val);
+            }
+            else if (section == "[EPSILON_CLUSTER]") {
+                clusterDualSys.loadEpsilon(std::stod(line));
+            }
+            else if (section == "[COUNTERS_CLUSTER]") {
+                std::stringstream ss(line);
+                std::string tok;
+                std::getline(ss, tok, ','); uint32_t s1 = std::stoul(tok);
+                std::getline(ss, tok, ','); uint32_t s2 = std::stoul(tok);
+                clusterDualSys.loadCounters(s1, s2);
             }
         }
 

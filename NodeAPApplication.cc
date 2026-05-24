@@ -63,6 +63,9 @@ namespace nr2{
         this->multipleFailurePercentage = 0.0;
         this->currentFailureWave = 0;
 
+        // v2: default é v1 (falha de líder); contaski.cc seta "member" para v2
+        this->failureMode = "leader";
+
         // Inicializar módulos do aprendizado intuitivo
         this->intuitiveEngine = new IntuitiveLearningEngine();
         this->anomalyDetector = new AnomalyDetector(2.0, 20);  // Z-threshold=2.0, janela=20
@@ -137,14 +140,20 @@ namespace nr2{
 
         // Agendar falhas se houver porcentagem configurada
         if(this->multipleFailuresEnabled){
-            // Cenário 4: Múltiplas falhas sequenciais
-            NS_LOG_INFO("FAILURE_CONFIG: Modo múltiplas falhas ativado — "
-                        << this->failureTimes.size() << " ondas de falha, "
+            // v2: rotear para wave de membros ou de líderes conforme failureMode
+            bool memberMode = (this->failureMode == "member");
+            NS_LOG_INFO("FAILURE_CONFIG: Modo múltiplas falhas ativado [" << this->failureMode
+                        << "] — " << this->failureTimes.size() << " ondas, "
                         << this->multipleFailurePercentage << "% cada");
             for(size_t i = 0; i < this->failureTimes.size(); i++){
                 NS_LOG_INFO("FAILURE_CONFIG: Onda " << (i+1) << " agendada para t=" << this->failureTimes[i] << "s");
-                Simulator::Schedule(Seconds(this->failureTimes[i]),
-                                    &NodeAPApplication::triggerMultipleFailureWave, this);
+                if(memberMode){
+                    Simulator::Schedule(Seconds(this->failureTimes[i]),
+                                        &NodeAPApplication::triggerMemberFailureWave, this);
+                } else {
+                    Simulator::Schedule(Seconds(this->failureTimes[i]),
+                                        &NodeAPApplication::triggerMultipleFailureWave, this);
+                }
             }
         }
         else if(this->actualFailurePercentage > 0.0){
@@ -567,9 +576,114 @@ namespace nr2{
             }
         }
 
-        NS_LOG_INFO("FAILURE_WAVE: Onda " << this->currentFailureWave 
+        NS_LOG_INFO("FAILURE_WAVE: Onda " << this->currentFailureWave
                     << " completa — " << leadersToFail << " líderes falharam"
                     << ", " << totalRealOrphans << " órfãos reais");
+    }
+
+    // ============================================================
+    // v2: Onda de falha em nós-membro (Estratégia A — pool global)
+    // ============================================================
+    void NodeAPApplication::triggerMemberFailureWave(){
+        this->currentFailureWave++;
+        double now = Simulator::Now().GetSeconds();
+
+        double waveFailurePercentage = this->multipleFailurePercentage;
+        if(!this->multipleFailurePercentages.empty()){
+            size_t idx = (size_t)(this->currentFailureWave - 1);
+            if(idx < this->multipleFailurePercentages.size()){
+                waveFailurePercentage = this->multipleFailurePercentages[idx];
+            }
+        }
+
+        NS_LOG_INFO("MEMBER_FAILURE_WAVE: === Onda " << this->currentFailureWave
+                    << " de " << this->failureTimes.size()
+                    << " no tempo " << now << "s ===");
+
+        // Construir pool global de membros vivos (não-líderes, com myLeader vivo)
+        // Líder vivo é pré-requisito para garantir que o nó é um MEMBRO, não órfão pré-existente
+        std::set<Ipv6Address> aliveLeaders;
+        for(const auto& entry : clusterInfoMap){
+            if(!entry.second.leaderAlive) continue;
+            Ptr<Node> leaderNode = findNodeByAddress(this->networkNodes, entry.first);
+            if(!leaderNode) continue;
+            Ptr<NodeApplication> leaderApp = DynamicCast<NodeApplication>(
+                leaderNode->GetApplication(0));
+            if(leaderApp && leaderApp->isNodeAlive()){
+                aliveLeaders.insert(entry.first);
+            }
+        }
+
+        std::vector<Ipv6Address> memberPool;
+        for(uint32_t j = 0; j < this->networkNodes.GetN(); j++){
+            Ptr<Node> n = this->networkNodes.Get(j);
+            Ptr<NodeApplication> nApp = DynamicCast<NodeApplication>(n->GetApplication(0));
+            if(!nApp || !nApp->isNodeAlive()) continue;
+
+            Ipv6Address addr = nApp->GetNodeIpAddress();
+            // Excluir líderes do pool
+            if(aliveLeaders.count(addr) > 0) continue;
+            // Excluir órfãos (myLeader morto ou inválido)
+            Ipv6Address ldr = nApp->getMyLeader();
+            if(aliveLeaders.count(ldr) == 0) continue;
+            // Não pode ser membro de si mesmo (já excluído acima, redundante)
+            if(ldr == addr) continue;
+
+            memberPool.push_back(addr);
+        }
+
+        if(memberPool.empty()){
+            NS_LOG_INFO("MEMBER_FAILURE_WAVE: Pool de membros vazio na onda "
+                        << this->currentFailureWave);
+            return;
+        }
+
+        int totalMembers = memberPool.size();
+        int membersToFail = (int)std::ceil(totalMembers * waveFailurePercentage / 100.0);
+        if(membersToFail == 0 && waveFailurePercentage > 0) membersToFail = 1;
+
+        NS_LOG_INFO("MEMBER_FAILURE_WAVE: " << membersToFail << " de " << totalMembers
+                    << " membros vivos irão falhar (" << waveFailurePercentage << "%)");
+
+        // Fisher-Yates determinístico via RNG do NS-3
+        Ptr<UniformRandomVariable> shuffleRng = CreateObject<UniformRandomVariable>();
+        for(int i = (int)memberPool.size() - 1; i > 0; i--){
+            shuffleRng->SetAttribute("Min", DoubleValue(0));
+            shuffleRng->SetAttribute("Max", DoubleValue(i + 0.999));
+            int j = (int)shuffleRng->GetValue();
+            if(j > i) j = i;
+            std::swap(memberPool[i], memberPool[j]);
+        }
+
+        std::map<Ipv6Address, int> deathsPerLeader;
+        for(int i = 0; i < membersToFail; i++){
+            Ipv6Address memberAddr = memberPool[i];
+            Ptr<Node> node = findNodeByAddress(this->networkNodes, memberAddr);
+            if(!node) continue;
+            Ptr<NodeApplication> mApp = DynamicCast<NodeApplication>(node->GetApplication(0));
+            if(!mApp) continue;
+
+            Ipv6Address leaderOfMember = mApp->getMyLeader();
+            deathsPerLeader[leaderOfMember]++;
+
+            NS_LOG_INFO("MEMBER_FAILURE_WAVE: Membro " << memberAddr
+                        << " (cluster=" << leaderOfMember << ") falhou no tempo " << now);
+
+            // Parar a aplicação do membro
+            Ptr<Application> app = node->GetApplication(0);
+            Simulator::ScheduleNow(&Application::SetStopTime, app, Simulator::Now());
+            mApp->StopApplication();
+        }
+
+        // Log resumo por cluster impactado
+        for(const auto& entry : deathsPerLeader){
+            NS_LOG_INFO("MEMBER_FAILURE_WAVE: Cluster " << entry.first
+                        << " perdeu " << entry.second << " membro(s) nesta onda");
+        }
+
+        NS_LOG_INFO("MEMBER_FAILURE_WAVE: Onda " << this->currentFailureWave
+                    << " completa — " << membersToFail << " membros falharam em "
+                    << deathsPerLeader.size() << " cluster(s)");
     }
 
 void NodeAPApplication::triggerLeaderFailures(){
@@ -820,8 +934,17 @@ void NodeAPApplication::triggerLeaderFailures(){
         IntuitiveSnapshot snap = intuitiveEngine->decisionCycle(
             now, clusters, anomalousNodes, totalNetworkNodes);
 
-        // [5] Processar órfãos com decisão individual por órfão
+        // [5] Processar órfãos com decisão individual por órfão (v1)
         processOrphansIntuitively(snap);
+
+        // [5b] v2: processar clusters degradados (falha de membro)
+        processClusterDegradationIntuitively(snap);
+
+        // Persistir snapshot do ciclo (combina contadores de [5] e [5b])
+        intuitiveEngine->getHistoryMut().push_back(snap);
+
+        // [5c] v2: ranking de risco por nó (Li ascendente) — inferência subproduto
+        dumpRiskRanking(now);
 
         // [6] Recalcular métricas após ação via myLeader
         for(auto& entry : clusterInfoMap){
@@ -966,9 +1089,7 @@ void NodeAPApplication::triggerLeaderFailures(){
 
         if(allOrphans.empty()){
             NS_LOG_INFO("INTUITIVE_ORPHANS: Nenhum órfão para processar");
-            // Registrar snapshot mesmo sem órfãos
-            intuitiveEngine->getHistoryMut().push_back(snap);
-            return;
+            return;  // caller fará o push do snapshot após [5b]
         }
 
         // [2] Coletar clusters ativos e suas capacidades
@@ -1259,15 +1380,358 @@ void NodeAPApplication::triggerLeaderFailures(){
         snap.cycleS1Count = dualSys.getS1Count() - s1CountBefore;
         snap.cycleS2Count = dualSys.getS2Count() - s2CountBefore;
 
-        // Registrar snapshot no histórico
-        intuitiveEngine->getHistoryMut().push_back(snap);
-
+        // O push do snapshot agora é responsabilidade do caller (após [5b])
         NS_LOG_INFO("INTUITIVE_ORPHANS: Processados " << allOrphans.size() << " órfãos"
                     << " | REALLOCATE=" << snap.actionsReallocate
                     << " RECLUSTER=" << snap.actionsRecluster
                     << " DO_NOTHING=" << snap.actionsDoNothing
                     << " | Pendentes=" << pendingOrphans.size()
                     << " | S1=" << snap.cycleS1Count << " S2=" << snap.cycleS2Count);
+    }
+
+    // ============================================================
+    // v2 — Processamento de clusters degradados (passo [5b])
+    // Para cada cluster vivo: computa capabilityCoverage + memberLossRate,
+    // classifica estado (HEALTHY/DEGRADED/CRITICAL), Dual-System escolhe
+    // ação (DO_NOTHING/REINFORCE/DISBAND), executa com fallback.
+    // ============================================================
+    void NodeAPApplication::processClusterDegradationIntuitively(IntuitiveSnapshot& snap){
+        const double REWARD_BASE    = 10.0;
+        const double REWARD_INVALID = -10.0;
+
+        auto& clusterDualSys = intuitiveEngine->getClusterDualSystemMut();
+        auto& knowledge      = intuitiveEngine->getKnowledge();
+        auto& distLearn      = intuitiveEngine->getDistributedLearning();
+        double qi      = intuitiveEngine->getLastQI();
+        double sr      = intuitiveEngine->getLastSR();
+        double pThreat = intuitiveEngine->getLastPThreat();
+
+        uint32_t s1Before = clusterDualSys.getS1Count();
+        uint32_t s2Before = clusterDualSys.getS2Count();
+
+        // [5b.1] Coletar info por cluster vivo: líder, caps do líder, membros vivos
+        struct ClusterCtx {
+            Ipv6Address          leaderAddr;
+            Ptr<NodeApplication> leaderApp;
+            capabilitiesVector   leaderCaps;
+            std::vector<Ipv6Address>      aliveMembers;       // não inclui o líder
+            std::vector<capabilitiesVector> aliveMemberCaps;  // paralelo a aliveMembers
+            uint32_t             initialMemberCount;
+            double               capabilityCoverage;
+            double               memberLossRate;
+            ClusterDegradedState state;
+        };
+        std::vector<ClusterCtx> ctxs;
+        ctxs.reserve(clusterInfoMap.size());
+
+        for(auto& entry : clusterInfoMap){
+            if(!entry.second.leaderAlive) continue;
+            Ptr<Node> leaderNode = findNodeByAddress(this->networkNodes, entry.first);
+            if(!leaderNode) continue;
+            Ptr<NodeApplication> leaderApp = DynamicCast<NodeApplication>(
+                leaderNode->GetApplication(0));
+            if(!leaderApp || !leaderApp->isNodeAlive()) continue;
+
+            ClusterCtx ctx;
+            ctx.leaderAddr = entry.first;
+            ctx.leaderApp  = leaderApp;
+            ctx.leaderCaps = leaderApp->getNodeCapabilities();
+            ctx.initialMemberCount = entry.second.initialMemberCount;
+
+            for(uint32_t j = 0; j < this->networkNodes.GetN(); j++){
+                Ptr<Node> n = this->networkNodes.Get(j);
+                Ptr<NodeApplication> nApp = DynamicCast<NodeApplication>(n->GetApplication(0));
+                if(!nApp || !nApp->isNodeAlive()) continue;
+                Ipv6Address nAddr = nApp->GetNodeIpAddress();
+                if(nAddr == ctx.leaderAddr) continue;
+                if(nApp->getMyLeader() != ctx.leaderAddr) continue;
+
+                ctx.aliveMembers.push_back(nAddr);
+                ctx.aliveMemberCaps.push_back(nApp->getNodeCapabilities());
+            }
+
+            // [5b.2] Snapshot do MULTI-SET (count por cap) — 1x por cluster.
+            // Permite computar perda gradual de redundância em [5b.3].
+            if(originalClusterCapsCount.find(ctx.leaderAddr) == originalClusterCapsCount.end()
+               && (ctx.aliveMembers.size() + 1) > 0){
+                std::map<capabilities, int> origCount;
+                for(auto c : ctx.leaderCaps) origCount[c]++;
+                for(auto& mc : ctx.aliveMemberCaps)
+                    for(auto c : mc) origCount[c]++;
+                originalClusterCapsCount[ctx.leaderAddr] = origCount;
+            }
+
+            // [5b.3] Capability redundancy: média_cap(count_atual / count_original).
+            // Mede perda de redundância (gradual) em vez de perda de presença (terminal).
+            // Ex.: cap X tinha 10 portadores, agora tem 7 → r_X = 0.7.
+            std::map<capabilities, int> currentCount;
+            for(auto c : ctx.leaderCaps) currentCount[c]++;
+            for(auto& mc : ctx.aliveMemberCaps)
+                for(auto c : mc) currentCount[c]++;
+
+            auto itOrig = originalClusterCapsCount.find(ctx.leaderAddr);
+            if(itOrig == originalClusterCapsCount.end() || itOrig->second.empty()){
+                ctx.capabilityCoverage = 1.0;
+            } else {
+                double sumRatio = 0.0;
+                int nCaps = 0;
+                for(const auto& kv : itOrig->second){
+                    auto itC = currentCount.find(kv.first);
+                    int curr = (itC == currentCount.end()) ? 0 : itC->second;
+                    // Clampar em [0,1] (curr nunca > original em cenário membro-falha-só)
+                    double r = (double)curr / (double)kv.second;
+                    if(r > 1.0) r = 1.0;
+                    sumRatio += r;
+                    nCaps++;
+                }
+                ctx.capabilityCoverage = (nCaps > 0) ? sumRatio / nCaps : 1.0;
+            }
+
+            // [5b.4] memberLossRate = 1 - clusterHealthRatio
+            if(ctx.initialMemberCount > 0){
+                double health = std::min(1.0,
+                    (double)ctx.aliveMembers.size() / (double)ctx.initialMemberCount);
+                ctx.memberLossRate = 1.0 - health;
+            } else {
+                ctx.memberLossRate = 0.0;
+            }
+
+            ctx.state = ClusterDualSystemResponse::determineState(
+                ctx.capabilityCoverage, ctx.memberLossRate);
+
+            // Contadores de estado
+            switch(ctx.state){
+                case CLUSTER_HEALTHY:  snap.clustersHealthy++;  break;
+                case CLUSTER_DEGRADED: snap.clustersDegraded++; break;
+                case CLUSTER_CRITICAL: snap.clustersCritical++; break;
+                default: break;
+            }
+
+            ctxs.push_back(ctx);
+        }
+
+        // [5b.5] Para cada cluster degradado/critical, escolher ação e executar
+        // (HEALTHY entra como contador mas não dispara decisão)
+        // Snapshot de tamanhos atuais para evitar tomar como doador um cluster
+        // que acabou de ser drenado neste mesmo ciclo
+        std::map<Ipv6Address, int> liveSizeMap;
+        for(auto& c : ctxs) liveSizeMap[c.leaderAddr] = (int)c.aliveMembers.size();
+
+        for(auto& ctx : ctxs){
+            if(ctx.state == CLUSTER_HEALTHY) continue;
+
+            // Dual-System decide ação
+            auto result = clusterDualSys.chooseActionForCluster(
+                knowledge, distLearn, qi, sr, pThreat, ctx.state);
+            ClusterAction action = result.first;
+            SystemUsed   system = result.second;
+
+            // Validar viabilidade do REINFORCE: precisa de doador saudável similar
+            // (sim>=0.85, com >= 2 membros vivos pra emprestar 1)
+            int donorIdx = -1;
+            double bestDonorSim = 0.0;
+            int donorMemberIdx = -1;
+            double bestMemberSim = 0.0;
+
+            auto findDonor = [&](){
+                donorIdx = -1; bestDonorSim = 0.0;
+                donorMemberIdx = -1; bestMemberSim = 0.0;
+                for(size_t i = 0; i < ctxs.size(); i++){
+                    if(ctxs[i].leaderAddr == ctx.leaderAddr) continue;
+                    if(ctxs[i].state != CLUSTER_HEALTHY) continue;
+                    if(liveSizeMap[ctxs[i].leaderAddr] < 2) continue;  // não esvaziar doador
+
+                    capabilitiesVector capA = ctx.leaderCaps;
+                    capabilitiesVector capB = ctxs[i].leaderCaps;
+                    double sim = capabilitiesSimilarity(&capA, &capB);
+                    if(sim >= REALLOCATION_THRESHOLD && sim > bestDonorSim){
+                        bestDonorSim = sim;
+                        donorIdx = (int)i;
+                    }
+                }
+                if(donorIdx < 0) return;
+                // Escolher o membro do doador mais similar ao cluster degradado
+                for(size_t k = 0; k < ctxs[donorIdx].aliveMemberCaps.size(); k++){
+                    capabilitiesVector capM = ctxs[donorIdx].aliveMemberCaps[k];
+                    capabilitiesVector capL = ctx.leaderCaps;
+                    double simM = capabilitiesSimilarity(&capM, &capL);
+                    if(simM > bestMemberSim){
+                        bestMemberSim = simM;
+                        donorMemberIdx = (int)k;
+                    }
+                }
+            };
+
+            if(action == CLUSTER_REINFORCE){
+                findDonor();
+                if(donorIdx < 0 || donorMemberIdx < 0){
+                    // Sem doador → fallback (DISBAND se CRITICAL, senão DO_NOTHING)
+                    ClusterAction fb = (ctx.state == CLUSTER_CRITICAL)
+                        ? CLUSTER_DISBAND : CLUSTER_DO_NOTHING;
+                    NS_LOG_INFO("CLUSTER_FALLBACK: REINFORCE inviável para " << ctx.leaderAddr
+                                << " (sem doador) → " << ClusterActionNames[fb]);
+                    action = fb;
+                }
+            }
+
+            double reward = 0.0;
+            bool resolved = false;
+
+            if(action == CLUSTER_REINFORCE){
+                Ipv6Address donorLeader  = ctxs[donorIdx].leaderAddr;
+                Ipv6Address donorMember  = ctxs[donorIdx].aliveMembers[donorMemberIdx];
+
+                // Transferir o membro: setMyLeader no membro + addClusterMember no novo líder
+                Ptr<Node> mNode = findNodeByAddress(this->networkNodes, donorMember);
+                if(mNode){
+                    Ptr<NodeApplication> mApp = DynamicCast<NodeApplication>(mNode->GetApplication(0));
+                    if(mApp){
+                        mApp->setMyLeader(ctx.leaderAddr);
+                        ctx.leaderApp->addClusterMember(donorMember);
+                        ctxs[donorIdx].leaderApp->clearClusterMembers();
+                        // Recompor lista do doador sem o membro emprestado
+                        for(size_t k = 0; k < ctxs[donorIdx].aliveMembers.size(); k++){
+                            if((int)k == donorMemberIdx) continue;
+                            ctxs[donorIdx].leaderApp->addClusterMember(
+                                ctxs[donorIdx].aliveMembers[k]);
+                        }
+                        liveSizeMap[donorLeader]--;
+                        liveSizeMap[ctx.leaderAddr]++;
+                        // Atualiza memberCount no clusterInfoMap dos dois envolvidos
+                        auto itA = clusterInfoMap.find(ctx.leaderAddr);
+                        if(itA != clusterInfoMap.end()) itA->second.memberCount++;
+                        auto itB = clusterInfoMap.find(donorLeader);
+                        if(itB != clusterInfoMap.end() && itB->second.memberCount > 0)
+                            itB->second.memberCount--;
+
+                        reward   = REWARD_BASE * bestDonorSim;
+                        resolved = true;
+                        snap.actionsReinforce++;
+                        NS_LOG_INFO("CLUSTER_REINFORCE: " << ctx.leaderAddr
+                                    << " [" << ClusterDegradedStateNames[ctx.state]
+                                    << "] ← doador " << donorLeader
+                                    << " membro " << donorMember
+                                    << " (sim=" << bestDonorSim
+                                    << " r=" << reward << ") ["
+                                    << SystemUsedNames[system] << "]");
+                    } else {
+                        reward = REWARD_INVALID;
+                    }
+                } else {
+                    reward = REWARD_INVALID;
+                }
+            }
+
+            if(action == CLUSTER_DISBAND){
+                // Dissolve o cluster: para o ex-líder (sua aplicação) e os
+                // membros vivos viram órfãos no próximo ciclo (pendingOrphans).
+                Ipv6Address exLeader = ctx.leaderAddr;
+
+                // Marcar líder como morto e parar sua aplicação
+                Ptr<Node> lNode = findNodeByAddress(this->networkNodes, exLeader);
+                if(lNode){
+                    Ptr<Application> app = lNode->GetApplication(0);
+                    Simulator::ScheduleNow(&Application::SetStopTime, app, Simulator::Now());
+                    ctx.leaderApp->StopApplication();
+                }
+
+                // Despejar membros vivos no pool de pendentes (serão órfãos no próximo ciclo
+                // de [5] da v1, com myLeader apontando pro ex-líder agora morto)
+                for(auto& m : ctx.aliveMembers){
+                    pendingOrphans.push_back(m);
+                }
+
+                // Marcar cluster como morto no map para limpeza posterior
+                auto itC = clusterInfoMap.find(exLeader);
+                if(itC != clusterInfoMap.end()) itC->second.leaderAlive = false;
+
+                // Notificar motor intuitivo
+                intuitiveEngine->registerLeaderDeath(exLeader);
+
+                reward   = REWARD_BASE * 0.5;  // ação destrutiva: ganho contido
+                resolved = true;
+                snap.actionsDisband++;
+                NS_LOG_INFO("CLUSTER_DISBAND: " << exLeader
+                            << " [" << ClusterDegradedStateNames[ctx.state]
+                            << "] dissolvido, " << ctx.aliveMembers.size()
+                            << " membros → pendingOrphans"
+                            << " (r=" << reward << ") ["
+                            << SystemUsedNames[system] << "]");
+            }
+
+            if(action == CLUSTER_DO_NOTHING){
+                reward = -2.0;  // pequeno custo de não-ação em estado problemático
+                snap.actionsClusterDoNothing++;
+                NS_LOG_INFO("CLUSTER_DO_NOTHING: " << ctx.leaderAddr
+                            << " [" << ClusterDegradedStateNames[ctx.state]
+                            << "] (cov=" << ctx.capabilityCoverage
+                            << " loss=" << ctx.memberLossRate
+                            << ") [" << SystemUsedNames[system] << "]");
+                resolved = true;
+            }
+
+            // Q-table e R_int (bucket prefixado pra não colidir com órfãos)
+            clusterDualSys.updateQForCluster(ctx.state, action, reward);
+            std::string bucket = std::string("CL_") + ClusterDegradedStateNames[ctx.state];
+            // R_int usa ação como int genérico — armazena no mesmo mapa, mas o bucket
+            // distinto evita confusão com ações de órfão
+            knowledge.updateIntuitive(bucket, static_cast<IntuitiveAction>(action), reward);
+
+            (void)resolved;  // suprimir warning unused
+        }
+
+        // [5b.6] Decaimento do epsilon do cluster dual-system (se houve degradação)
+        if(snap.clustersDegraded + snap.clustersCritical > 0){
+            clusterDualSys.decayEpsilon();
+        }
+
+        snap.cycleS1ClusterCount = clusterDualSys.getS1Count() - s1Before;
+        snap.cycleS2ClusterCount = clusterDualSys.getS2Count() - s2Before;
+
+        NS_LOG_INFO("CLUSTER_DEGRADATION: HEALTHY=" << snap.clustersHealthy
+                    << " DEGRADED=" << snap.clustersDegraded
+                    << " CRITICAL=" << snap.clustersCritical
+                    << " | REINFORCE=" << snap.actionsReinforce
+                    << " DISBAND=" << snap.actionsDisband
+                    << " DO_NOTHING=" << snap.actionsClusterDoNothing
+                    << " | S1c=" << snap.cycleS1ClusterCount
+                    << " S2c=" << snap.cycleS2ClusterCount);
+    }
+
+    // ============================================================
+    // v2 — Dump de ranking de risco (inferência subproduto)
+    // Para cada ciclo, escreve Li ascendente: nós com Li baixo são candidatos
+    // a falhar / requerem atenção. Sem custo extra (Li já é mantido).
+    // ============================================================
+    void NodeAPApplication::dumpRiskRanking(double timestamp){
+        const auto& allNodes = intuitiveEngine->getDistributedLearning().getAllNodes();
+        if(allNodes.empty()) return;
+
+        struct Entry { Ipv6Address addr; double Li; bool isLeader; bool isAnomalous; };
+        std::vector<Entry> rows;
+        rows.reserve(allNodes.size());
+        for(const auto& kv : allNodes){
+            if(!kv.second.alive) continue;
+            Entry e{kv.first, kv.second.Li, kv.second.isLeader, kv.second.isAnomalous};
+            rows.push_back(e);
+        }
+        std::sort(rows.begin(), rows.end(),
+                  [](const Entry& a, const Entry& b){ return a.Li < b.Li; });
+
+        // Append no arquivo único da rodada para todos os ciclos
+        static bool headerWritten = false;
+        std::ofstream out("RiskRanking.csv", std::ios::app);
+        if(!headerWritten){
+            out << "timestamp,rank,address,Li,isLeader,isAnomalous" << std::endl;
+            headerWritten = true;
+        }
+        int rank = 1;
+        for(const auto& r : rows){
+            out << timestamp << "," << rank++ << "," << r.addr << ","
+                << r.Li << "," << (r.isLeader?1:0) << "," << (r.isAnomalous?1:0)
+                << std::endl;
+        }
+        out.close();
     }
 
     std::vector<ClusterInfo> NodeAPApplication::buildClusterInfoVector() const {
@@ -1304,8 +1768,14 @@ void NodeAPApplication::triggerLeaderFailures(){
         ofstream logFile("IntuitiveStats.csv");
         logFile << "timestamp,qi,sr,tii,arf,meanRho,netLearning,pThreat,"
                 << "totalOrphans,actionsReallocate,actionsRecluster,actionsDoNothing,"
-                << "cycleS1,cycleS2,anomalies,qDoNothing,qReallocate,qRecluster" << std::endl;
-        
+                << "cycleS1,cycleS2,anomalies,qDoNothing,qReallocate,qRecluster,"
+                // v2: campos da decisão por cluster
+                << "clustersHealthy,clustersDegraded,clustersCritical,"
+                << "actionsReinforce,actionsDisband,actionsClusterDoNothing,"
+                << "cycleS1Cluster,cycleS2Cluster,"
+                << "qClusterDoNothing,qReinforce,qDisband"
+                << std::endl;
+
         for(const auto& snap : history){
             logFile << snap.timestamp << ","
                     << snap.qi << ","
@@ -1324,7 +1794,19 @@ void NodeAPApplication::triggerLeaderFailures(){
                     << snap.anomalies << ","
                     << snap.qDoNothing << ","
                     << snap.qReallocate << ","
-                    << snap.qRecluster
+                    << snap.qRecluster << ","
+                    // v2
+                    << snap.clustersHealthy << ","
+                    << snap.clustersDegraded << ","
+                    << snap.clustersCritical << ","
+                    << snap.actionsReinforce << ","
+                    << snap.actionsDisband << ","
+                    << snap.actionsClusterDoNothing << ","
+                    << snap.cycleS1ClusterCount << ","
+                    << snap.cycleS2ClusterCount << ","
+                    << snap.qClusterDoNothing << ","
+                    << snap.qReinforce << ","
+                    << snap.qDisband
                     << std::endl;
         }
         logFile.close();
@@ -1344,8 +1826,24 @@ void NodeAPApplication::triggerLeaderFailures(){
         qFile << "Epsilon final: " << intuitiveEngine->getDualSystem().getEpsilon() << std::endl;
         qFile << "S1 count total: " << intuitiveEngine->getDualSystem().getS1Count() << std::endl;
         qFile << "S2 count total: " << intuitiveEngine->getDualSystem().getS2Count() << std::endl;
+
+        // v2: Q-table do cluster dual-system
+        qFile << std::endl << "=== Q-VALORES CLUSTER (3x3) ===" << std::endl;
+        for(int s = 0; s < CLUSTER_DEGRADED_STATE_COUNT; s++){
+            qFile << "Estado " << ClusterDegradedStateNames[s] << ":" << std::endl;
+            for(int a = 0; a < CLUSTER_ACTION_COUNT; a++){
+                qFile << "  " << ClusterActionNames[a] << ": "
+                      << intuitiveEngine->getClusterDualSystem().getQValue(
+                            static_cast<ClusterDegradedState>(s),
+                            static_cast<ClusterAction>(a))
+                      << std::endl;
+            }
+        }
+        qFile << "Epsilon cluster final: " << intuitiveEngine->getClusterDualSystem().getEpsilon() << std::endl;
+        qFile << "S1 cluster count total: " << intuitiveEngine->getClusterDualSystem().getS1Count() << std::endl;
+        qFile << "S2 cluster count total: " << intuitiveEngine->getClusterDualSystem().getS2Count() << std::endl;
         qFile.close();
 
-        NS_LOG_INFO("INTUITIVE: Logs escritos em IntuitiveStats.csv e IntuitiveQValues.txt");
+        NS_LOG_INFO("INTUITIVE: Logs escritos em IntuitiveStats.csv, IntuitiveQValues.txt, RiskRanking.csv");
     }
 }

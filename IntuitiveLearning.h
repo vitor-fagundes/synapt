@@ -90,6 +90,43 @@ namespace nr2 {
         "RECLUSTER_ORPHANS"
     };
 
+    // ============================================================
+    // v2: Decisão por cluster (falha de membro, não de líder)
+    // ============================================================
+    // Quando membros caem, o líder sobrevive mas o cluster degrada.
+    // Estado classifica gravidade; ação decide remediação.
+
+    enum ClusterAction {
+        CLUSTER_DO_NOTHING = 0,
+        CLUSTER_REINFORCE,        // Puxar 1 membro de cluster vizinho similar (>= 0.85)
+        CLUSTER_DISBAND,          // Dissolver: membros sobreviventes viram órfãos
+        CLUSTER_ACTION_COUNT
+    };
+
+    enum ClusterDegradedState {
+        CLUSTER_HEALTHY = 0,      // capabilityCoverage>=0.85 AND memberLossRate<=0.30
+        CLUSTER_DEGRADED,         // exatamente um dos sinais cruza o threshold
+        CLUSTER_CRITICAL,         // ambos os sinais cruzam o threshold
+        CLUSTER_DEGRADED_STATE_COUNT
+    };
+
+    [[maybe_unused]] static const char* ClusterDegradedStateNames[] = {
+        "HEALTHY", "DEGRADED", "CRITICAL"
+    };
+
+    [[maybe_unused]] static const char* ClusterActionNames[] = {
+        "DO_NOTHING",
+        "REINFORCE",
+        "DISBAND"
+    };
+
+    // Thresholds para classificação do estado do cluster.
+    // Calibrados para que ondas de 25% × 2 (cross-cluster) produzam todos os 3
+    // estados (HEALTHY/DEGRADED/CRITICAL) com frequência observável.
+    // Valores frouxos (0.85/0.30) deixavam CRITICAL=0 em todas as rodadas.
+    const double CLUSTER_COVERAGE_THRESHOLD     = 0.90;
+    const double CLUSTER_MEMBER_LOSS_THRESHOLD  = 0.20;
+
     // Sistema que tomou a decisão
     enum SystemUsed {
         SYSTEM_S1,      // System 1: resposta rápida/intuitiva
@@ -155,6 +192,19 @@ namespace nr2 {
         double      qDoNothing;
         double      qReallocate;
         double      qRecluster;
+
+        // v2: decisão por cluster (falha de membro)
+        uint32_t    clustersHealthy;
+        uint32_t    clustersDegraded;
+        uint32_t    clustersCritical;
+        uint32_t    actionsClusterDoNothing;
+        uint32_t    actionsReinforce;
+        uint32_t    actionsDisband;
+        uint32_t    cycleS1ClusterCount;
+        uint32_t    cycleS2ClusterCount;
+        double      qClusterDoNothing;
+        double      qReinforce;
+        double      qDisband;
     };
 
     // Informação que o AP mantém sobre cada cluster
@@ -351,6 +401,65 @@ namespace nr2 {
     };
 
     // ============================================================
+    // v2 — Dual-System por cluster (paralelo ao de órfãos)
+    // Q-table e R_int separados; mesmos hiperparâmetros.
+    // ============================================================
+
+    class ClusterDualSystemResponse {
+    public:
+        ClusterDualSystemResponse(double epsilon = 0.15, double epsilonDecay = 0.97,
+                                  double epsilonMin = 0.02);
+
+        void setThresholdS1(double t) { thresholdS1 = t; }
+
+        // Classifica o estado do cluster a partir dos dois sinais
+        static ClusterDegradedState determineState(double capabilityCoverage,
+                                                    double memberLossRate);
+
+        // Escolhe ação para um cluster degradado individual
+        std::pair<ClusterAction, SystemUsed> chooseActionForCluster(
+            const KnowledgeNetworks& knowledge,
+            const DistributedLearning& distLearn,
+            double qi, double sr, double pThreat,
+            ClusterDegradedState clusterState);
+
+        void updateQForCluster(ClusterDegradedState state, ClusterAction action,
+                               double reward);
+
+        void decayEpsilon();
+
+        double getEpsilon() const { return epsilon; }
+        double getQValue(ClusterDegradedState s, ClusterAction a) const;
+        double getQValueAvg(ClusterAction a) const;
+        uint32_t getS1Count() const { return s1Count; }
+        uint32_t getS2Count() const { return s2Count; }
+
+        // Persistência (formato paralelo ao de DualSystemResponse)
+        void saveToStream(std::ofstream& out) const;
+        void loadQValue(int state, int action, double value) { Q[state][action] = value; }
+        void loadEpsilon(double eps) { epsilon = eps; }
+        void loadCounters(uint32_t s1, uint32_t s2) { s1Count = s1; s2Count = s2; }
+
+    private:
+        ClusterAction system1Response(
+            const KnowledgeNetworks& knowledge,
+            ClusterDegradedState clusterState);
+        ClusterAction system2Response(
+            ClusterDegradedState clusterState,
+            const DistributedLearning& distLearn);
+
+        std::map<int, std::map<int, double>> Q;
+        double epsilon;
+        double epsilonDecay;
+        double epsilonMin;
+        double thresholdS1 = THRESHOLD_S1;
+        uint32_t s1Count;
+        uint32_t s2Count;
+        Ptr<UniformRandomVariable> m_uniformRng;
+        Ptr<UniformRandomVariable> m_actionRng;
+    };
+
+    // ============================================================
     // MÓDULO 5 — Métricas de Intuição: TII, ARF, ρ(i,j)
     // (Definições 2, 3 e 4, Pedroso 2026)
     // ============================================================
@@ -415,6 +524,8 @@ namespace nr2 {
         DistributedLearning& getDistributedLearning() { return distLearn; }
         const DualSystemResponse& getDualSystem() const { return dualSys; }
         DualSystemResponse& getDualSystemMut() { return dualSys; }
+        const ClusterDualSystemResponse& getClusterDualSystem() const { return clusterDualSys; }
+        ClusterDualSystemResponse& getClusterDualSystemMut() { return clusterDualSys; }
         const std::vector<IntuitiveSnapshot>& getHistory() const { return history; }
         std::vector<IntuitiveSnapshot>& getHistoryMut() { return history; }
 
@@ -428,9 +539,10 @@ namespace nr2 {
         double calculateSR(const std::vector<ClusterInfo>& clusters, uint32_t liveDenom);
 
         // Módulos
-        KnowledgeNetworks   knowledge;
-        DistributedLearning distLearn;
-        DualSystemResponse  dualSys;
+        KnowledgeNetworks         knowledge;
+        DistributedLearning       distLearn;
+        DualSystemResponse        dualSys;
+        ClusterDualSystemResponse clusterDualSys;   // v2: decisões por cluster degradado
 
         // Estado
         double              lastQI;

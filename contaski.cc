@@ -53,6 +53,10 @@ int main (int argc, char *argv[]){
 	double multiFailurePercent = 30.0;      // Porcentagem de falha em cada onda
 	std::string failureTimesStr = "300,450,600"; // Tempos das ondas de falha (separados por vírgula)
 
+	// v2: modo da falha — "leader" (v1, default) ou "member" (v2)
+	// No modo member, cada onda mata X% dos NÓS-MEMBRO vivos (pool global) em vez de líderes
+	std::string failureMode = "leader";
+
 	// Cenário 5: Full random — N ondas com tempo e % sorteados por onda
 	bool randomFailures = false;            // Se true, ativa modo full random (mutuamente exclusivo com multipleFailures)
 	int  nFailureWaves = 3;                 // Número de ondas a sortear
@@ -76,6 +80,7 @@ int main (int argc, char *argv[]){
 	cmd.AddValue ("multipleFailures", "Enable multiple sequential failures (scenario 4)", multipleFailures);
 	cmd.AddValue ("multiFailurePercent", "Failure percentage for each wave", multiFailurePercent);
 	cmd.AddValue ("failureTimes", "Comma-separated failure times (e.g. 300,450,600)", failureTimesStr);
+	cmd.AddValue ("failureMode", "Failure target: 'leader' (v1) or 'member' (v2)", failureMode);
 	cmd.AddValue ("randomFailures", "Enable full random failures (scenario 5): N waves with sampled time and percentage", randomFailures);
 	cmd.AddValue ("nFailureWaves", "Number of failure waves to sample in random mode", nFailureWaves);
 	cmd.AddValue ("randFailureTimeMin", "Minimum sampled failure time in seconds (random mode)", randFailureTimeMin);
@@ -186,6 +191,13 @@ int main (int argc, char *argv[]){
 	apApplication->setTotalNodes(nNodes);
 	apApplication->setDecisionInterval(decisionInterval);
 	apApplication->setKnowledgePath(knowledgePath);
+
+	// v2: configurar modo de falha (leader=v1 padrão, member=v2)
+	apApplication->setFailureMode(failureMode);
+	if(failureMode != "leader" && failureMode != "member"){
+		NS_LOG_INFO("AVISO: failureMode='" << failureMode << "' inválido — usando 'leader'");
+		apApplication->setFailureMode("leader");
+	}
 
 	// Cenário 4: Configurar múltiplas falhas sequenciais (% fixa, tempos explícitos)
 	// Cenário 5: Full random tem prioridade sobre cenário 4 quando ambos são solicitados
