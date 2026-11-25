@@ -323,17 +323,16 @@ def verify(tr, p, cols):
     def members(x, lid, dead):
         return sum(1 for i in range(n) if not dead[i] and i != x and lid[i] == x)
 
-    def unknown_alive(lid, dead):
-        return sum(1 for i in range(n) if not dead[i] and lid[i] == UNKNOWN)
+    followers = {x: m for e in tr["ev"] for x, m in e["p"]}
 
     def check_count(x, logged, lid, lead, dead, what):
+        """Líder inicial: log = membros conhecidos. Novo líder: log = membros conhecidos
+        (eleitores e realocados) + seguidores registrados em 'Novo cluster ... com m seguidores'."""
         known = members(x, lid, dead)
-        if lead[x] == 1:
-            if known != logged:
-                probs.append(f"A2: {what} do líder {x}: log {logged} × reconstruído {known}")
-        elif not (known <= logged <= known + unknown_alive(lid, dead)):
-            probs.append(f"A2: {what} do novo líder {x}: log {logged} fora de [{known}, "
-                         f"{known + unknown_alive(lid, dead)}]")
+        expected = known if lead[x] == 1 else known + followers.get(x, 0)
+        if logged != expected:
+            probs.append(f"A2: {what} do {'líder' if lead[x] == 1 else 'novo líder'} {x}: "
+                         f"log {logged} × reconstruído {expected}")
 
     waves_parsed = {(w["w"], w["k"]): w for w in p["waves"]}
 
