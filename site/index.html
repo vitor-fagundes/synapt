@@ -98,6 +98,8 @@ input[type=range]{width:100%;accent-color:var(--sel);margin:6px 0 2px}
 .kpi{border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:0}
 .kpi .k{font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kpi .v{font-family:Spectral,Georgia,serif;font-size:25px;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap}
+.kpi.sm .v{font-size:20px;line-height:1.4}
+#qtab th,#qtab td{padding:5px 6px;font-size:12.5px}
 .kpi .d{font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums;min-height:18px}
 .kpi .d b{color:var(--ink);font-weight:600}
 .flag{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:1px 7px;border:1px solid var(--line)}
@@ -271,7 +273,7 @@ footer{padding:28px 0;color:var(--mut);font-size:13px;border-top:1px solid var(-
     <h3>Desenho experimental</h3>
     <ul>
       <li>Todas as séries rodam com <code>--run=0</code> de propósito: a aleatoriedade do NS-3 fica fixa, e o que varia entre rodadas é a carga, ou seja, capacidades dos nós e tarefas sorteadas por <code>std::random_device</code> a cada rodada.</li>
-      <li>As 35 rodadas de um grupo são <b>episódios sucessivos de aprendizado</b>, encadeados pelo <code>knowledge.dat</code> (Q-table, ε, R_int e contadores S1/S2 passam de uma rodada para a seguinte). A rodada 1 de cada grupo começou sem conhecimento.</li>
+      <li>As 35 rodadas de um grupo são <b>episódios sucessivos de aprendizado</b>, encadeados pelo <code>knowledge.dat</code> (histórico, R_int, Q-table, ε e contadores S1/S2 passam de uma rodada para a seguinte). A rodada 1 de cada grupo começou sem conhecimento.</li>
       <li>Os <b>cenários (grupos) são execuções independentes</b> entre si: cada grupo sorteou suas próprias cargas. Comparar a rodada k de dois cenários não é comparar a mesma execução.</li>
       <li>O agregado mostrado é a <b>média ± DP ao longo das 35 rodadas</b> (DP amostral). Não é um intervalo de confiança: as rodadas não são amostras independentes.</li>
     </ul>
@@ -345,7 +347,7 @@ const MET = {
 const CEN = {no:'Sem falhas', with:'Com falhas', random:'Falhas aleatórias'};
 const STEPS = [
   ['Atualização dos clusters','Recontagem dos membros reais de cada cluster pelo campo myLeader de cada nó vivo.'],
-  ['Detecção de anomalias','Taxa de aceite de tarefas, tempo desde o último contato e saúde do cluster de cada líder; anômalo só se os Z-scores global e temporal concordarem.'],
+  ['Detecção de anomalias','Para cada líder vivo: taxa de aceite de tarefas, tempo desde o último contato e saúde do cluster. É anômalo só se a média dos três Z-scores passar de 2,0 contra todos os líderes (global) e contra o próprio histórico de até 20 ciclos (temporal).'],
   ['Aprendizado distribuído','Um passo da difusão de Li entre nós do mesmo cluster: ΔLi = Σ β·(Lj − Li) + ξi e Li ← Li + α·ΔLi (α = 0,20; β = 0,10). ξi é o ξ do grupo para líderes anômalos e +0,01 × fração de vizinhos vivos para os demais.'],
   ['Métricas globais','pThreat = 1 − média de Li dos líderes vivos; QI = 0,5·conectividade + 0,3·propagação + 0,2·entrega; SR = nós alcançáveis / nós vivos; TII. É aqui, antes das ações, que o CSV registra QI, SR e pThreat.'],
   ['Processamento de órfãos','Para cada órfão: estado (EXISTING_VIABLE, ORPHAN_ONLY ou NO_MATCH, limiar 0,85). Se pThreat > limiar S1, S1 consulta R_int (com heurística quando falta experiência); senão, se QI ou SR < 0,60, S2 prevalece (registrado como S1+S2 e contado como S2); senão, S2 ε-greedy. Ação inviável cai para a alternativa viável ou DO_NOTHING.'],
@@ -498,8 +500,8 @@ function animateSteps(){
 }
 
 // ---------------------------------------------------------------- render
-function kpi(id, label, value, detail){
-  const box = el('div', {class:'kpi', id}); box.append(el('div', {class:'k', title:label}, label), el('div', {class:'v'}, value));
+function kpi(id, label, value, detail, small){
+  const box = el('div', {class:'kpi' + (small ? ' sm' : ''), id}); box.append(el('div', {class:'k', title:label}, label), el('div', {class:'v'}, value));
   const d = el('div', {class:'d'}); if(detail) d.append(detail); box.append(d); return box;
 }
 function withSd(key, k, f){ const s = sdv(key, k); return s === null ? null : document.createTextNode('± ' + f(s)); }
@@ -517,15 +519,15 @@ function render(k){
   let ptd;
   if(m){ ptd = el('span'); const up = pt > m.thS1; ptd.append(el('span', {class:'flag' + (up ? ' up' : '')}, up ? 'acima do limiar S1' : 'abaixo do limiar S1'), document.createTextNode(` ${fmt(m.thS1, 3)}` + (S.mean ? ` · ± ${fmt(sdv('pt',k),4)}` : ''))); }
   else ptd = document.createTextNode('limiar desconhecido (arquivo local)');
-  K.append(kpi('kpt', 'pThreat', MET.pt.f(pt), ptd));
+  K.append(kpi('kpt', 'pThreat', (m && Math.abs(pt - m.thS1) < 5e-4) ? fmt(pt, 6) : MET.pt.f(pt), ptd));
   K.append(kpi('ktii', 'TII', MET.tii.f(val('tii',k)), withSd('tii',k,MET.tii.f)));
   const cnt = key => S.mean ? fmt(val(key,k), 2) : fmt(val(key,k), 0);
   K.append(kpi('korf', 'Órfãos no ciclo', cnt('orf'), withSd('orf',k,x=>fmt(x,2))));
   K.append(kpi('kan', 'Anomalias', cnt('an'), withSd('an',k,x=>fmt(x,2))));
   const act = el('span'); act.append(document.createTextNode('REALLOCATE / RECLUSTER / DO_NOTHING'));
-  K.append(kpi('kact', 'Ações R / C / D', `${cnt('rea')} / ${cnt('rec')} / ${cnt('dn')}`, act));
+  K.append(kpi('kact', 'Ações R / C / D', `${cnt('rea')} / ${cnt('rec')} / ${cnt('dn')}`, act, S.mean));
   const qd = el('span'); qd.append(document.createTextNode('D / R / C · média dos 3 estados, antes das ações'));
-  K.append(kpi('kq', 'Q médio por ação', `${fmt(val('qd',k),1)} / ${fmt(val('qr',k),1)} / ${fmt(val('qc',k),1)}`, qd));
+  K.append(kpi('kq', 'Q médio por ação', `${fmt(val('qd',k),1)} / ${fmt(val('qr',k),1)} / ${fmt(val('qc',k),1)}`, qd, true));
   // dual
   const s1 = val('s1', k), s2 = val('s2', k), tot = s1 + s2;
   $('#s1c').textContent = cnt('s1'); $('#s2c').textContent = cnt('s2');
