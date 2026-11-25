@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.DS_Store
+.site-build-tmp/
+node_modules/
+.e2e-capturas/
