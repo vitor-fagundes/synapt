@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SYNAPT · simulador</title>
+<meta name="description" content="Replay ciclo a ciclo das métricas do SYNAPT (resiliência IIoT com Dual-System S1/S2) registradas nas 245 rodadas de simulação NS-3.">
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Spectral:wght@500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  color-scheme:light dark;
+  --bg:light-dark(#ffffff,#121316);
+  --bg2:light-dark(#f6f6f4,#18191d);
+  --panel:light-dark(#ffffff,#1c1d22);
+  --ink:light-dark(#191919,#ececec);
+  --mut:light-dark(#5f5f63,#a2a2a8);
+  --line:light-dark(#e2e2e0,#2e2f35);
+  --grid:light-dark(#efefed,#26272c);
+  --sel:light-dark(#191919,#ececec);
+  --selink:light-dark(#ffffff,#121316);
+  --s1:light-dark(#257de0,#338ced);
+  --s2:light-dark(#f47230,#e76624);
+  --crit:#dc3c3d;
+  --warnbg:light-dark(#fff6e0,#2a2414);
+  --warnline:light-dark(#e9c46a,#6b5a26);
+  --errbg:light-dark(#fdecec,#2c1617);
+  --band:light-dark(rgba(25,25,25,.10),rgba(236,236,236,.13));
+}
+:root[data-theme="light"]{color-scheme:light}
+:root[data-theme="dark"]{color-scheme:dark}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;overflow-x:clip}
+h1,h2,h3{font-family:Spectral,Georgia,serif;font-weight:600;line-height:1.1;margin:0;text-wrap:balance}
+h1{font-size:clamp(30px,5vw,48px)}
+h2{font-size:clamp(24px,3.4vw,34px);margin-bottom:12px}
+h3{font-size:19px}
+p{margin:0 0 12px}
+a{color:inherit}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13.5px}
+pre{background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto;margin:0 0 12px;white-space:pre}
+.wrap{max-width:1180px;margin:0 auto;padding:0 16px}
+.band{padding:40px 0}
+.band.alt{background:var(--bg2);border-block:1px solid var(--line)}
+.mut{color:var(--mut)}
+.small{font-size:13px}
+.tab{font-variant-numeric:tabular-nums}
+/* topo */
+.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(6px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:16px;min-height:56px}
+.brand{font-family:Spectral,Georgia,serif;font-size:21px;font-weight:600;white-space:nowrap}
+.brand span{color:var(--mut);font-family:Inter,sans-serif;font-size:13px;font-weight:500;margin-left:6px}
+.top nav{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+.top nav a{text-decoration:none;font-size:14px;padding:8px 10px;border-radius:8px;color:var(--mut)}
+.top nav a:hover{color:var(--ink);background:var(--bg2)}
+.ib{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;height:36px;min-width:36px;padding:0 10px;cursor:pointer;font:500 14px Inter,sans-serif}
+.ib:hover{border-color:var(--mut)}
+/* erro */
+#err{display:none;background:var(--errbg);border-bottom:2px solid var(--crit);color:var(--ink)}
+#err.on{display:block}
+#err .wrap{padding-block:12px;font-size:14px}
+#err b{color:var(--crit)}
+/* controles */
+.ctrls{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:flex-end;margin:20px 0 12px}
+.fld{display:flex;flex-direction:column;gap:6px}
+.fld>span{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--mut)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px;background:var(--panel);flex-wrap:wrap}
+.seg button{border:0;background:transparent;color:var(--ink);font:500 14px Inter,sans-serif;padding:7px 12px;border-radius:7px;cursor:pointer;white-space:nowrap}
+.seg button[aria-pressed="true"]{background:var(--sel);color:var(--selink)}
+.seg button:disabled{opacity:.38;cursor:not-allowed}
+select{font:500 14px Inter,sans-serif;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:10px;height:38px;padding:0 10px}
+.chk{display:inline-flex;align-items:center;gap:8px;font-size:14px;height:38px;cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--sel)}
+.notes{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.note{border:1px solid var(--line);border-left:3px solid var(--mut);background:var(--panel);border-radius:8px;padding:9px 12px;font-size:14px}
+.note.warn{border-left-color:var(--warnline);background:var(--warnbg)}
+.chip{display:inline-flex;align-items:center;gap:8px;font-size:13px;border:1px solid var(--line);border-radius:999px;padding:4px 6px 4px 12px;background:var(--panel)}
+[hidden]{display:none!important}
+.chip button{border:0;background:var(--bg2);color:var(--ink);border-radius:999px;padding:3px 10px;cursor:pointer;font:500 12px Inter,sans-serif}
+/* palco */
+.stage{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+.card h3{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:12px}
+.card h3 small{font:500 12px Inter,sans-serif;color:var(--mut)}
+.clock{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:10px}
+.clock .t{font-family:Spectral,Georgia,serif;font-size:36px;line-height:1;font-variant-numeric:tabular-nums}
+.clock .c{font-size:14px;color:var(--mut);font-variant-numeric:tabular-nums}
+.transport{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.transport .ib{height:38px}
+#pp{min-width:116px}
+input[type=range]{width:100%;accent-color:var(--sel);margin:6px 0 2px}
+.speed{display:flex;align-items:center;gap:8px;margin-left:auto}
+.speed .seg button{padding:5px 9px;font-size:13px}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:14px}
+.kpi{border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:0}
+.kpi .k{font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi .v{font-family:Spectral,Georgia,serif;font-size:25px;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap}
+.kpi .d{font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums;min-height:18px}
+.kpi .d b{color:var(--ink);font-weight:600}
+.flag{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:1px 7px;border:1px solid var(--line)}
+.flag.up{border-color:var(--s1)}
+/* dual */
+.dual{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.dual .box{border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.dual .lab{font-size:12px;color:var(--mut);display:flex;align-items:center;gap:6px}
+.key{display:inline-block;width:14px;height:3px;border-radius:2px}
+.key.s1{background:var(--s1)}.key.s2{background:var(--s2)}
+.dual b{display:block;font-family:Spectral,Georgia,serif;font-size:28px;line-height:1.1;font-variant-numeric:tabular-nums}
+.bar{display:flex;gap:2px;height:12px;margin:12px 0 4px;border-radius:4px;overflow:hidden;background:var(--grid)}
+.bar i{display:block;height:100%}
+.bar .b1{background:var(--s1)}.bar .b2{background:var(--s2)}
+.rows{margin-top:10px;font-size:14px;display:grid;grid-template-columns:auto auto;gap:4px 12px}
+.rows dt{color:var(--mut)}.rows dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+.topo{margin-top:16px;border:1px dashed var(--line);border-radius:10px;padding:16px;text-align:center;color:var(--mut);font-size:14px;min-height:120px;display:flex;flex-direction:column;justify-content:center;gap:4px}
+.topo b{color:var(--ink);font-weight:600}
+/* gráfico */
+.chartcard header{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;justify-content:space-between;margin-bottom:8px}
+#chart{position:relative}
+#chart svg{display:block;width:100%;height:auto;touch-action:pan-y}
+#chart text{font:12px Inter,sans-serif;fill:var(--mut)}
+#chart .lbl{fill:var(--ink);font-weight:500}
+#chart .wv text{fill:var(--crit);font-weight:600}
+#tip{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.12);display:none;white-space:nowrap;font-variant-numeric:tabular-nums}
+#tip b{display:block;font-size:15px}
+.legendline{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--mut);margin-top:6px}
+.legendline span{display:inline-flex;align-items:center;gap:6px}
+.lk{display:inline-block;width:16px;height:0;border-top:2px solid var(--ink)}
+.lk.dash{border-top:2px dashed var(--mut)}.lk.wv{border-top:2px dashed var(--crit)}
+.lk.bd{height:10px;border:0;background:var(--band)}
+.lk.cur{border-top:0;border-left:2px solid var(--mut);height:12px;width:2px}
+details{margin-top:12px}
+summary{cursor:pointer;font-size:14px;color:var(--mut)}
+.tblwrap{overflow-x:auto;max-width:100%}
+table{border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums}
+th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left;white-space:normal}
+thead th{font-size:12px;color:var(--mut);font-weight:600}
+td.cur,th.cur{background:var(--bg2)}
+.scroll{max-height:320px;overflow:auto}
+/* como funciona */
+.how{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.steps li{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel);transition:opacity .2s,border-color .2s}
+.steps li .n{font-family:Spectral,Georgia,serif;font-size:18px;margin-right:6px}
+.steps li .st{font-size:12px;color:var(--mut);float:right}
+.steps li.off{opacity:.45}
+.steps li.ran{border-left:3px solid var(--ink)}
+.steps li.now{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+.steps li p{margin:4px 0 0;font-size:14px;color:var(--mut)}
+.prose{max-width:78ch}
+.prose h3{margin:22px 0 8px}
+.prose ul{padding-left:20px;margin:0 0 12px}
+.prose li{margin-bottom:6px}
+.drop{border:1px dashed var(--line);border-radius:10px;padding:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+#fmsg{font-size:14px;margin-top:8px;min-height:20px}
+#fmsg.bad{color:var(--crit)}
+footer{padding:28px 0;color:var(--mut);font-size:13px;border-top:1px solid var(--line)}
+@media(max-width:980px){.stage,.how{grid-template-columns:minmax(0,1fr)}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){
+  .top nav{display:none}
+  #cmp th,#cmp td{padding:6px 5px;font-size:13px;white-space:normal}
+  #cmp .sdv{display:block;color:var(--mut);font-size:12px}
+  .band{padding:28px 0}
+  .clock .t{font-size:30px}
+  .kpi .v{font-size:22px}
+  .speed{margin-left:0}
+  #pp{min-width:0}
+}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.steps li{transition:none}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="brand">SYNAPT<span>simulador de replay</span></div>
+    <nav aria-label="Seções">
+      <a href="#sim">Simulação</a><a href="#res">Resultados</a><a href="#como">Como funciona</a><a href="#metodo">Método</a><a href="#dados">Seus dados</a>
+    </nav>
+    <button class="ib" id="theme" type="button" aria-label="Alternar tema claro/escuro" title="Alternar tema">◐</button>
+  </div>
+</header>
+<div id="err" role="alert"><div class="wrap"><b>Erro ao carregar dados.</b> <span id="errmsg"></span></div></div>
+
+<main>
+<section class="band" id="sim">
+  <div class="wrap">
+    <h1>SYNAPT, ciclo a ciclo</h1>
+    <p class="mut" style="max-width:72ch;margin-top:10px">Replay das métricas registradas pelo orquestrador do AP a cada 5 s nas simulações NS-3 do SYNAPT: qualidade da rede, ameaça, órfãos, ações e a escolha entre o Sistema 1 (intuitivo) e o Sistema 2 (deliberativo). Tudo vem dos arquivos de resultado; nada é recalculado pelo modelo.</p>
+
+    <div class="ctrls">
+      <div class="fld"><span>Nós (N)</span><div class="seg" id="segN" role="group" aria-label="Número de nós"></div></div>
+      <div class="fld"><span>Cenário</span><div class="seg" id="segC" role="group" aria-label="Cenário"></div></div>
+      <label class="fld"><span>Rodada</span><select id="run" aria-label="Rodada"></select></label>
+      <label class="chk"><input type="checkbox" id="mean"> Média ± DP ao longo das 35 rodadas</label>
+      <span id="localchip" hidden class="chip"><span id="localname"></span><button type="button" id="localexit">sair</button></span>
+    </div>
+    <div class="notes" id="notes"></div>
+
+    <div class="stage">
+      <div class="card">
+        <div class="clock"><span class="t" id="clk">t = — s</span><span class="c" id="cyc">ciclo — de —</span></div>
+        <div class="transport">
+          <button class="ib" id="prev" type="button" aria-label="Ciclo anterior">◀ Anterior</button>
+          <button class="ib" id="pp" type="button" aria-label="Reproduzir">▶ Reproduzir</button>
+          <button class="ib" id="next" type="button" aria-label="Próximo ciclo">Próximo ▶</button>
+          <div class="speed"><span class="small mut">Velocidade</span><div class="seg" id="segS" role="group" aria-label="Velocidade"></div></div>
+        </div>
+        <input type="range" id="tl" min="0" max="144" step="1" value="0" aria-label="Ciclo">
+        <div class="kpis" id="kpis"></div>
+      </div>
+      <div class="card">
+        <h3>Motor Dual-System <small id="dualsub">decisões por órfão</small></h3>
+        <div class="dual">
+          <div class="box"><div class="lab"><i class="key s1"></i>S1 neste ciclo</div><b id="s1c">—</b></div>
+          <div class="box"><div class="lab"><i class="key s2"></i>S2 neste ciclo</div><b id="s2c">—</b></div>
+        </div>
+        <div class="bar" id="s12bar" aria-hidden="true"><i class="b1"></i><i class="b2"></i></div>
+        <div class="small mut" id="s12txt">—</div>
+        <dl class="rows">
+          <dt>S1 / S2 acumulados na rodada</dt><dd id="accR">—</dd>
+          <dt>S1 / S2 acumulados na série</dt><dd id="accS">—</dd>
+          <dt>ε ao fim da rodada</dt><dd id="eps">—</dd>
+          <dt>Limiar S1 / ξ do grupo</dt><dd id="thr">—</dd>
+        </dl>
+        <div class="topo" id="topo"><b>Topologia</b><span>requer trace (Fase B)</span><span class="small">Nenhuma topologia é desenhada sem dados por nó.</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band alt" id="res">
+  <div class="wrap">
+    <h2>Evolução e comparação</h2>
+    <div class="card chartcard">
+      <header>
+        <h3 id="charttitle" style="margin:0">Evolução por ciclo</h3>
+        <label class="fld"><span>Métrica</span><select id="met" aria-label="Métrica do gráfico"></select></label>
+      </header>
+      <div id="chart"><div id="tip" role="status"></div></div>
+      <div class="legendline" id="legend"></div>
+      <details><summary>Tabela do gráfico</summary><div class="tblwrap scroll"><table id="charttable"></table></div></details>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h3>Comparação entre cenários <small id="cmpsub"></small></h3>
+      <div class="tblwrap"><table id="cmp"></table></div>
+      <p class="small mut" id="cmpnote" style="margin-top:10px"></p>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="como">
+  <div class="wrap">
+    <h2>Como funciona</h2>
+    <div class="how">
+      <div>
+        <p class="prose">A cada 5 s o orquestrador no AP executa as sete etapas abaixo, em sequência. Durante o replay, as etapas executadas no ciclo atual ficam marcadas. As etapas 1 a 4 e a 7 rodam em todo ciclo; a 5 só quando há órfãos e a 6 só quando algum órfão foi marcado para reclusterização. É o que o CSV permite afirmar.</p>
+        <p class="small mut" id="stepnow"></p>
+      </div>
+      <ol class="steps" id="steps"></ol>
+    </div>
+  </div>
+</section>
+
+<section class="band alt" id="metodo">
+  <div class="wrap prose">
+    <h2>Método e proveniência</h2>
+    <h3>Desenho experimental</h3>
+    <ul>
+      <li>Todas as séries rodam com <code>--run=0</code> de propósito: a aleatoriedade do NS-3 fica fixa, e o que varia entre rodadas é a carga, ou seja, capacidades dos nós e tarefas sorteadas por <code>std::random_device</code> a cada rodada.</li>
+      <li>As 35 rodadas de um grupo são <b>episódios sucessivos de aprendizado</b>, encadeados pelo <code>knowledge.dat</code> (Q-table, ε, R_int e contadores S1/S2 passam de uma rodada para a seguinte). A rodada 1 de cada grupo começou sem conhecimento.</li>
+      <li>Os <b>cenários (grupos) são execuções independentes</b> entre si: cada grupo sorteou suas próprias cargas. Comparar a rodada k de dois cenários não é comparar a mesma execução.</li>
+      <li>O agregado mostrado é a <b>média ± DP ao longo das 35 rodadas</b> (DP amostral). Não é um intervalo de confiança: as rodadas não são amostras independentes.</li>
+    </ul>
+    <h3>Tempos reais</h3>
+    <p>O AP inicia em t = 10 s e seus agendamentos são relativos a esse início. Por isso o primeiro ciclo registrado é t = 170 s (145 ciclos, até 890 s), e as ondas configuradas para 300/450/600 s disparam em 310/460/610 s. No cenário aleatório, cada onda dispara no tempo sorteado + 10 s.</p>
+    <h3>Parâmetros por grupo</h3>
+    <div class="tblwrap"><table id="ptab"></table></div>
+    <h3>Diferenças em relação ao README</h3>
+    <p>Para o que foi executado vale a precedência <b>logs &gt; código atual &gt; README</b>. O README não foi alterado; as diferenças são:</p>
+    <ul>
+      <li>Tempos: o README cita primeiro ciclo em 160 s e ondas em 300/450/600 s; os logs mostram 170 s e 310/460/610 s.</li>
+      <li>Calibragem: o README aplica o override de densidade a todo N ≥ 300. Nos logs, ele aparece nas 35 rodadas de <code>300_with_failures</code> e em nenhuma de <code>300_no_failures</code>, que foi gerado antes da calibragem. Em N = 300, sem falhas e com falhas usam parâmetros diferentes.</li>
+      <li>A linha “300 nós — com falhas” da tabela de resultados do README (98,9% ± 0,6% / 98,6% ± 1,8%) corresponde ao grupo <code>300_with_failures_OLD_backup</code>, anterior à calibragem. Este site usa o <code>300_with_failures</code> atual.</li>
+      <li>Os exemplos de execução do README usam <code>--run=1</code>; as séries publicadas usaram <code>--run=0</code>.</li>
+      <li>O README não lista o grupo <code>250_random_failures</code> e descreve outra organização de pastas; aqui cada rodada fica em <code>results-synapt/&lt;grupo&gt;/run_NNN/</code>.</li>
+    </ul>
+    <h3>Evidência do <code>--run=0</code></h3>
+    <ul id="runevid"></ul>
+    <p class="small mut" id="commitinfo"></p>
+  </div>
+</section>
+
+<section class="band" id="dados">
+  <div class="wrap prose">
+    <h2>Seus dados</h2>
+    <p>Para gerar uma execução, compile o NS-3 e rode o cenário a partir da raiz do <code>ns-3-dev</code>. Os arquivos <code>IntuitiveStats.csv</code>, <code>IntuitiveQValues.txt</code> e <code>APStats.txt</code> são gravados no diretório de execução.</p>
+<pre>./ns3 build
+python3 ns3 run --no-build "scratch/synapt/contaski --nNodes=200 --run=0 \
+  --knowledgePath=/caminho/para/knowledge.dat \
+  --multipleFailures=true --multiFailurePercent=30 --failureTimes=300,450,600"</pre>
+    <p>Para regenerar os dados deste site a partir de <code>results-synapt/</code> (o guard deixa a pasta sem escrita durante a execução):</p>
+<pre>tools/with_results_guard.sh python3 tools/build_site_data.py</pre>
+    <h3>Carregar trace</h3>
+    <p>Nesta versão o botão aceita um <code>IntuitiveStats.csv</code> avulso (cabeçalho original de 18 colunas, timestamps crescentes, até 20 MiB). O arquivo é lido só no seu navegador e substitui a rodada exibida, apenas com as métricas. Traces JSON por nó chegam na Fase B.</p>
+    <div class="drop">
+      <input id="fi" type="file" accept=".csv,text/csv,.json,application/json" aria-label="Arquivo de trace">
+      <button class="ib" id="ld" type="button">Carregar trace</button>
+    </div>
+    <div id="fmsg" role="status"></div>
+  </div>
+</section>
+</main>
+<footer><div class="wrap">SYNAPT · simulador web de replay das métricas registradas. Fonte dos dados: <code>results-synapt/</code>, via <code>tools/build_site_data.py</code>.</div></footer>
+
+<script>
+"use strict";
+(() => {
+const $ = s => document.querySelector(s);
+const NF = (d) => new Intl.NumberFormat('pt-BR', {minimumFractionDigits: d, maximumFractionDigits: d});
+const fmt = (x, d) => (x === null || x === undefined || Number.isNaN(x)) ? '—' : NF(d).format(x);
+const pct = (x, d = 2) => fmt(x * 100, d) + '%';
+const el = (tag, attrs = {}, text) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); if (text !== undefined) e.textContent = text; return e; };
+const SVGNS = 'http://www.w3.org/2000/svg';
+const sv = (tag, attrs = {}, text) => { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); if (text !== undefined) e.textContent = text; return e; };
+
+const CSV_HEADER = ['timestamp','qi','sr','tii','arf','meanRho','netLearning','pThreat','totalOrphans','actionsReallocate','actionsRecluster','actionsDoNothing','cycleS1','cycleS2','anomalies','qDoNothing','qReallocate','qRecluster'];
+const COLS = ['qi','sr','tii','arf','rho','nl','pt','orf','rea','rec','dn','s1','s2','an','qd','qr','qc'];
+const INTC = new Set(['orf','rea','rec','dn','s1','s2','an']);
+const MET = {
+  qi:{n:'QI (Quality Index)', f:x=>pct(x)}, sr:{n:'SR (nós cobertos / N)', f:x=>pct(x)},
+  pt:{n:'pThreat', f:x=>fmt(x,4)}, tii:{n:'TII', f:x=>fmt(x,4)},
+  orf:{n:'Órfãos no ciclo', f:x=>fmt(x,0)}, s1:{n:'Decisões S1 no ciclo', f:x=>fmt(x,0)}, s2:{n:'Decisões S2 no ciclo', f:x=>fmt(x,0)},
+  rea:{n:'REALLOCATE no ciclo', f:x=>fmt(x,0)}, rec:{n:'RECLUSTER no ciclo', f:x=>fmt(x,0)}, dn:{n:'DO_NOTHING no ciclo', f:x=>fmt(x,0)},
+  an:{n:'Anomalias detectadas', f:x=>fmt(x,0)}, nl:{n:'Aprendizado médio da rede (netLearning)', f:x=>fmt(x,4)},
+  rho:{n:'ρ médio (meanRho)', f:x=>fmt(x,4)}, arf:{n:'ARF', f:x=>fmt(x,5)},
+  qd:{n:'Q médio de DO_NOTHING', f:x=>fmt(x,2)}, qr:{n:'Q médio de REALLOCATE', f:x=>fmt(x,2)}, qc:{n:'Q médio de RECLUSTER', f:x=>fmt(x,2)},
+};
+const CEN = {no:'Sem falhas', with:'Com falhas', random:'Falhas aleatórias'};
+const STEPS = [
+  ['Atualização dos clusters','Recontagem dos membros reais de cada cluster pelo campo myLeader de cada nó vivo.'],
+  ['Detecção de anomalias','Taxa de aceite de tarefas, tempo desde o último contato e saúde do cluster de cada líder; anômalo só se os Z-scores global e temporal concordarem.'],
+  ['Aprendizado distribuído','Um passo da difusão de Li: ΔLi = Σ β·(Lj − Li) + ξi, com α = 0,20 e β = 0,10; líderes anômalos recebem ξ negativo.'],
+  ['Métricas globais','pThreat = 1 − média de Li dos líderes vivos; QI = 0,5·conectividade + 0,3·propagação + 0,2·entrega; SR e TII.'],
+  ['Processamento de órfãos','Para cada órfão: estado (EXISTING_VIABLE, ORPHAN_ONLY ou NO_MATCH, limiar 0,85); S1 se pThreat > limiar S1, senão S2 ε-greedy; ação REALLOCATE, RECLUSTER ou DO_NOTHING.'],
+  ['Recluster coletivo','Órfãos marcados para RECLUSTER são agrupados por similaridade ≥ 0,85; o de maior Li vira líder do novo cluster.'],
+  ['Persistência e decaimento','QI/SR recalculados após as ações; ε ← max(0,02; 0,97·ε) se houve órfãos; knowledge.dat salvo ao fim da rodada.'],
+];
+const S = {idx:null, groups:{}, n:200, cen:'with', run:1, mean:false, k:0, playing:false, speed:1, metric:'qi', local:null, timer:null, stepTimer:null, stepNow:-1};
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// ---------------------------------------------------------------- erros e fetch
+function showError(msg){ $('#errmsg').textContent = msg; $('#err').classList.add('on'); }
+async function getJSON(url){
+  let r;
+  try { r = await fetch(url, {cache:'no-cache'}); }
+  catch(e){ throw new Error(`${url}: falha de rede (sem resposta HTTP)`); }
+  if(!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  try { return await r.json(); } catch(e){ throw new Error(`${url}: JSON inválido`); }
+}
+function checkIndex(ix){
+  const bad = f => { throw new Error(`data/index.json: dados em formato inesperado (${f})`); };
+  if(!ix || ix.t0 !== 170 || ix.dt !== 5 || ix.nc !== 145) bad('t0/dt/nc');
+  if(!Array.isArray(ix.cols) || ix.cols.join() !== COLS.join()) bad('cols');
+  if(!Array.isArray(ix.grupos) || !ix.grupos.length) bad('grupos');
+  for(const g of ix.grupos){ if(typeof g.id !== 'string' || ![200,250,300].includes(g.n) || !CEN[g.cen] || typeof g.thS1 !== 'number' || typeof g.xi !== 'number') bad('grupos[].id/n/cen/thS1/xi'); }
+}
+function checkGroup(g, id){
+  const bad = f => { throw new Error(`data/${id}.json: dados em formato inesperado (${f})`); };
+  if(!g || g.id !== id || !Array.isArray(g.runs) || g.runs.length !== 35) bad('runs');
+  const dims = m => Array.isArray(m) && m.length === 17 && m.every(c => Array.isArray(c) && c.length === 145 && c.every(Number.isFinite));
+  for(const r of g.runs){
+    if(!dims(r.d)) bad(`runs[${r.r}].d`);
+    if(!Array.isArray(r.ondas) || !r.fim || !Number.isFinite(r.fim.eps)) bad(`runs[${r.r}].ondas/fim`);
+  }
+  if(!g.agg || !dims(g.agg.m) || !dims(g.agg.sd)) bad('agg');
+}
+async function loadGroup(id){
+  if(S.groups[id]) return S.groups[id];
+  const g = await getJSON(`data/${id}.json`);
+  checkGroup(g, id);
+  return S.groups[id] = g;
+}
+const gmeta = () => S.idx.grupos.find(g => g.n === S.n && g.cen === S.cen);
+const ci = key => COLS.indexOf(key);
+
+// ---------------------------------------------------------------- acesso aos dados
+function nc(){ return S.local ? S.local.t.length : S.idx.nc; }
+function tAt(k){ return S.local ? S.local.t[k] : S.idx.t0 + S.idx.dt * k; }
+function series(key){
+  if(S.local) return {v:S.local.d[ci(key)], sd:null};
+  const g = S.groups[gmeta().id];
+  if(S.mean) return {v:g.agg.m[ci(key)], sd:g.agg.sd[ci(key)]};
+  return {v:g.runs[S.run-1].d[ci(key)], sd:null};
+}
+const val = (key, k) => series(key).v[k];
+const sdv = (key, k) => { const s = series(key).sd; return s ? s[k] : null; };
+function waves(){
+  if(S.local) return [];
+  const m = gmeta(), g = S.groups[m.id];
+  if(S.mean) return m.cen === 'random' ? [] : g.runs[0].ondas;
+  return g.runs[S.run-1].ondas;
+}
+
+// ---------------------------------------------------------------- controles
+function buildControls(){
+  const segN = $('#segN'); segN.replaceChildren();
+  for(const n of [200,250,300]){ const b = el('button', {type:'button','data-n':n,'aria-pressed':'false'}, String(n)); b.onclick = () => select({n}); segN.append(b); }
+  const segC = $('#segC'); segC.replaceChildren();
+  for(const c of ['no','with','random']){ const b = el('button', {type:'button','data-c':c,'aria-pressed':'false'}, CEN[c]); b.onclick = () => select({cen:c}); segC.append(b); }
+  const run = $('#run'); run.replaceChildren();
+  for(let r = 1; r <= 35; r++) run.append(el('option', {value:r}, String(r)));
+  run.onchange = () => select({run:+run.value});
+  $('#mean').onchange = e => select({mean:e.target.checked});
+  const segS = $('#segS');
+  for(const s of [0.5,1,2,4]){ const b = el('button', {type:'button','data-s':s,'aria-pressed':String(s===1)}, fmt(s, s%1?1:0)+'×'); b.onclick = () => { S.speed = s; segS.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(+x.dataset.s === s))); if(S.playing){ stop(); play(); } }; segS.append(b); }
+  const met = $('#met');
+  for(const [k, m] of Object.entries(MET)) met.append(el('option', {value:k}, m.n));
+  met.onchange = () => { S.metric = met.value; drawChart(); };
+  $('#prev').onclick = () => { stop(); setK(S.k - 1); };
+  $('#next').onclick = () => { stop(); setK(S.k + 1); };
+  $('#pp').onclick = () => S.playing ? stop() : play();
+  $('#tl').oninput = e => { stop(); setK(+e.target.value); };
+  $('#localexit').onclick = () => { S.local = null; select({}); };
+}
+function syncControls(){
+  document.querySelectorAll('#segN button').forEach(b => b.setAttribute('aria-pressed', String(!S.local && +b.dataset.n === S.n)));
+  document.querySelectorAll('#segC button').forEach(b => {
+    const ok = S.idx.grupos.some(g => g.n === S.n && g.cen === b.dataset.c);
+    b.disabled = !ok; b.title = ok ? '' : 'Cenário não executado para este N';
+    b.setAttribute('aria-pressed', String(!S.local && b.dataset.c === S.cen));
+  });
+  $('#run').value = String(S.run); $('#run').disabled = S.mean || !!S.local;
+  $('#mean').checked = S.mean; $('#mean').disabled = !!S.local;
+  $('#localchip').hidden = !S.local;
+  if(S.local) $('#localname').textContent = `Arquivo local: ${S.local.name}`;
+  $('#tl').max = String(nc() - 1);
+}
+async function select(ch){
+  stop();
+  if('n' in ch || 'cen' in ch || 'run' in ch) S.local = null;
+  Object.assign(S, ch);
+  if(!S.idx.grupos.some(g => g.n === S.n && g.cen === S.cen)) S.cen = 'with';
+  try {
+    if(!S.local){ await loadGroup(gmeta().id); }
+  } catch(e){ showError(e.message); return; }
+  if(S.k >= nc()) S.k = nc() - 1;
+  syncControls(); renderNotes(); render(S.k); drawChart(); buildCompare();
+}
+
+// ---------------------------------------------------------------- replay
+function setK(k){ S.k = Math.max(0, Math.min(nc() - 1, k)); render(S.k); }
+function play(){
+  if(S.k >= nc() - 1) setK(0);
+  S.playing = true; $('#pp').textContent = '❚❚ Pausar'; $('#pp').setAttribute('aria-label','Pausar');
+  const tick = () => {
+    if(!S.playing) return;
+    if(S.k >= nc() - 1){ stop(); return; }
+    setK(S.k + 1); animateSteps();
+    S.timer = setTimeout(tick, 700 / S.speed);
+  };
+  animateSteps();
+  S.timer = setTimeout(tick, 700 / S.speed);
+}
+function stop(){
+  S.playing = false; clearTimeout(S.timer); clearTimeout(S.stepTimer); S.stepNow = -1;
+  $('#pp').textContent = '▶ Reproduzir'; $('#pp').setAttribute('aria-label','Reproduzir');
+  renderSteps(S.k);
+}
+function ranSteps(k){
+  const orf = val('orf', k), rec = val('rec', k);
+  return [true, true, true, true, orf > 0, rec > 0, true];
+}
+function animateSteps(){
+  clearTimeout(S.stepTimer);
+  if(reduced){ S.stepNow = -1; renderSteps(S.k); return; }
+  const ran = ranSteps(S.k).map((r, i) => r ? i : -1).filter(i => i >= 0);
+  const dt = (700 / S.speed) / ran.length;
+  let j = 0;
+  const step = () => { S.stepNow = ran[j]; renderSteps(S.k); j++; if(j < ran.length && S.playing) S.stepTimer = setTimeout(step, dt); };
+  step();
+}
+
+// ---------------------------------------------------------------- render
+function kpi(id, label, value, detail){
+  const box = el('div', {class:'kpi', id}); box.append(el('div', {class:'k', title:label}, label), el('div', {class:'v'}, value));
+  const d = el('div', {class:'d'}); if(detail) d.append(detail); box.append(d); return box;
+}
+function withSd(key, k, f){ const s = sdv(key, k); return s === null ? null : document.createTextNode('± ' + f(s)); }
+function render(k){
+  const m = S.local ? null : gmeta();
+  const t = tAt(k);
+  $('#clk').textContent = `t = ${fmt(t, 0)} s`;
+  $('#cyc').textContent = `ciclo ${k + 1} de ${nc()}` + (S.mean ? ' · média das 35 rodadas' : S.local ? ' · arquivo local' : ` · rodada ${S.run}`);
+  $('#tl').value = String(k);
+  const K = $('#kpis'); K.replaceChildren();
+  K.append(kpi('kqi', 'QI', MET.qi.f(val('qi',k)), withSd('qi',k,MET.qi.f)));
+  K.append(kpi('ksr', 'SR', MET.sr.f(val('sr',k)), withSd('sr',k,MET.sr.f)));
+  const pt = val('pt', k);
+  let ptd;
+  if(m){ ptd = el('span'); const up = pt > m.thS1; ptd.append(el('span', {class:'flag' + (up ? ' up' : '')}, up ? 'acima do limiar S1' : 'abaixo do limiar S1'), document.createTextNode(` ${fmt(m.thS1, 3)}` + (S.mean ? ` · ± ${fmt(sdv('pt',k),4)}` : ''))); }
+  else ptd = document.createTextNode('limiar desconhecido (arquivo local)');
+  K.append(kpi('kpt', 'pThreat', MET.pt.f(pt), ptd));
+  K.append(kpi('ktii', 'TII', MET.tii.f(val('tii',k)), withSd('tii',k,MET.tii.f)));
+  const cnt = key => S.mean ? fmt(val(key,k), 2) : fmt(val(key,k), 0);
+  K.append(kpi('korf', 'Órfãos no ciclo', cnt('orf'), withSd('orf',k,x=>fmt(x,2))));
+  K.append(kpi('kan', 'Anomalias', cnt('an'), withSd('an',k,x=>fmt(x,2))));
+  const act = el('span'); act.append(document.createTextNode('REALLOCATE / RECLUSTER / DO_NOTHING'));
+  K.append(kpi('kact', 'Ações R / C / D', `${cnt('rea')} / ${cnt('rec')} / ${cnt('dn')}`, act));
+  const qd = el('span'); qd.append(document.createTextNode('D / R / C · média dos 3 estados'));
+  K.append(kpi('kq', 'Q médio por ação', `${fmt(val('qd',k),1)} / ${fmt(val('qr',k),1)} / ${fmt(val('qc',k),1)}`, qd));
+  // dual
+  const s1 = val('s1', k), s2 = val('s2', k), tot = s1 + s2;
+  $('#s1c').textContent = cnt('s1'); $('#s2c').textContent = cnt('s2');
+  const bar = $('#s12bar'); bar.children[0].style.flex = String(tot ? s1 : 0); bar.children[1].style.flex = String(tot ? s2 : 0);
+  bar.children[0].style.display = s1 > 0 ? 'block' : 'none'; bar.children[1].style.display = s2 > 0 ? 'block' : 'none';
+  $('#s12txt').textContent = tot > 0 ? `S1 ${fmt(100*s1/tot,0)}% · S2 ${fmt(100*s2/tot,0)}% das decisões do ciclo (S2 inclui S1+S2, quando S2 prevalece)` : 'Sem órfãos neste ciclo: nenhuma decisão S1/S2.';
+  let a1 = 0, a2 = 0; const v1 = series('s1').v, v2 = series('s2').v;
+  for(let i = 0; i <= k; i++){ a1 += v1[i]; a2 += v2[i]; }
+  $('#accR').textContent = S.mean ? `${fmt(a1,1)} / ${fmt(a2,1)} (média)` : `${fmt(a1,0)} / ${fmt(a2,0)}`;
+  if(m && !S.mean){
+    const g = S.groups[m.id], prev = S.run > 1 ? g.runs[S.run-2].fim : {s1tot:0, s2tot:0};
+    $('#accS').textContent = `${fmt(prev.s1tot + a1, 0)} / ${fmt(prev.s2tot + a2, 0)}`;
+    $('#eps').textContent = fmt(g.runs[S.run-1].fim.eps, 4);
+  } else { $('#accS').textContent = '—'; $('#eps').textContent = S.mean ? '— (ver tabela)' : '—'; }
+  $('#thr').textContent = m ? `${fmt(m.thS1,3)} / ${fmt(m.xi,3)}` : '—';
+  renderSteps(k);
+  moveCursor(k);
+}
+function ready(){ return !!S.idx && (!!S.local || !!S.groups[(gmeta() || {}).id]); }
+function renderSteps(k){
+  if(!ready()) return;
+  const ol = $('#steps'); ol.replaceChildren();
+  const ran = ranSteps(k);
+  STEPS.forEach(([n, d], i) => {
+    const li = el('li', {class: (ran[i] ? 'ran' : 'off') + (S.stepNow === i ? ' now' : '')});
+    li.append(el('span', {class:'st'}, ran[i] ? 'executada' : (i === 4 ? 'sem órfãos neste ciclo' : 'sem RECLUSTER neste ciclo')));
+    li.append(el('span', {class:'n'}, `[${i + 1}]`), document.createTextNode(n), el('p', {}, d));
+    ol.append(li);
+  });
+  $('#stepnow').textContent = `Ciclo ${k + 1} (t = ${fmt(tAt(k),0)} s): ${ran.filter(Boolean).length} de 7 etapas executadas` + (S.mean ? ' (no modo média, a etapa conta como executada se ocorreu em pelo menos uma rodada)' : '') + '.';
+}
+function renderNotes(){
+  const N = $('#notes'); N.replaceChildren();
+  const add = (txt, warn) => N.append(el('div', {class:'note' + (warn ? ' warn' : '')}, txt));
+  if(S.local){ add('Arquivo local: só as métricas do CSV são exibidas. Ondas, limiar do grupo, ε e acumulados da série não existem no arquivo.'); return; }
+  const m = gmeta();
+  add('Cenários são execuções independentes: cada grupo sorteou suas próprias cargas. Dentro de um grupo, as 35 rodadas são episódios encadeados pelo knowledge.dat.');
+  if(S.n === 300) add('N = 300: “sem falhas” é pré-calibragem (limiar S1 0,20; ξ −0,05) e “com falhas” é pós-calibragem (limiar S1 0,245; ξ −0,033). Os dois grupos usam parâmetros diferentes.', true);
+  add(m.nota);
+  if(S.mean && m.cen === 'random') add('Modo média no cenário aleatório: as ondas variam de rodada para rodada e não são marcadas no gráfico.', true);
+  if(!S.mean){ const r = S.groups[m.id].runs[S.run-1]; if(r.zero) add(`Rodada ${S.run}: começou sem conhecimento acumulado (knowledge.dat inexistente).`); }
+}
+
+// ---------------------------------------------------------------- gráfico
+let CH = null;
+function niceTicks(lo, hi, n){
+  if(hi === lo){ hi = lo + 1; }
+  const span = hi - lo, step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1,2,2.5,5,10].map(x => x * mag).find(x => span / x <= n) || 10 * mag;
+  const a = Math.floor(lo / step) * step, b = Math.ceil(hi / step) * step, out = [];
+  for(let v = a; v <= b + step / 2; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+function drawChart(){
+  if(!ready()) return;
+  const box = $('#chart'); const tip = $('#tip');
+  box.querySelectorAll('svg').forEach(s => s.remove());
+  const key = S.metric, M = MET[key], {v, sd} = series(key);
+  const W = Math.max(300, box.clientWidth), H = W < 520 ? 240 : 300;
+  const pad = {l: 60, r: 14, t: 30, b: 34};
+  const n = v.length;
+  let lo = Infinity, hi = -Infinity;
+  for(let i = 0; i < n; i++){ const s = sd ? sd[i] : 0; lo = Math.min(lo, v[i] - s); hi = Math.max(hi, v[i] + s); }
+  const m = S.local ? null : gmeta();
+  if(key === 'pt' && m){ lo = Math.min(lo, m.thS1); hi = Math.max(hi, m.thS1); }
+  if(INTC.has(key)) lo = Math.min(0, lo);
+  const ticks = niceTicks(lo, hi, 5); lo = ticks[0]; hi = ticks[ticks.length - 1];
+  const axf = (key === 'qi' || key === 'sr') ? (t => pct(t, 0)) : M.f;
+  pad.l = 14 + 7.2 * Math.max(...ticks.map(t => axf(t).length));
+  const x = i => pad.l + (W - pad.l - pad.r) * (n > 1 ? (tAt(i) - tAt(0)) / (tAt(n-1) - tAt(0)) : 0);
+  const xt = t => pad.l + (W - pad.l - pad.r) * (t - tAt(0)) / ((tAt(n-1) - tAt(0)) || 1);
+  const y = val => pad.t + (H - pad.t - pad.b) * (1 - (val - lo) / ((hi - lo) || 1));
+  const svg = sv('svg', {viewBox:`0 0 ${W} ${H}`, role:'img', 'aria-label':`${M.n} por ciclo`});
+  for(const tk of ticks){
+    svg.append(sv('line', {x1:pad.l, x2:W-pad.r, y1:y(tk), y2:y(tk), stroke:'var(--grid)', 'stroke-width':1}));
+    svg.append(sv('text', {x:pad.l - 8, y:y(tk) + 4, 'text-anchor':'end'}, axf(tk)));
+  }
+  const t0 = tAt(0), t1 = tAt(n-1);
+  for(let tt = Math.ceil(t0 / 100) * 100; tt <= t1; tt += (W < 520 ? 200 : 100)) svg.append(sv('text', {x:xt(tt), y:H - 12, 'text-anchor':'middle'}, `${tt} s`));
+  svg.append(sv('line', {x1:pad.l, x2:W-pad.r, y1:H-pad.b, y2:H-pad.b, stroke:'var(--line)', 'stroke-width':1}));
+  if(sd){
+    let d = ''; for(let i = 0; i < n; i++) d += (i ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(v[i] + sd[i]).toFixed(1);
+    for(let i = n - 1; i >= 0; i--) d += 'L' + x(i).toFixed(1) + ',' + y(v[i] - sd[i]).toFixed(1);
+    svg.append(sv('path', {d: d + 'Z', fill:'var(--band)', stroke:'none'}));
+  }
+  if(key === 'pt' && m){
+    svg.append(sv('line', {x1:pad.l, x2:W-pad.r, y1:y(m.thS1), y2:y(m.thS1), stroke:'var(--mut)', 'stroke-width':1.5, 'stroke-dasharray':'5 4'}));
+    svg.append(sv('text', {x:W - pad.r - 4, y:y(m.thS1) - 6, 'text-anchor':'end', class:'lbl'}, `limiar S1 = ${fmt(m.thS1,3)}`));
+  }
+  const wv = waves(); const gw = sv('g', {class:'wv'});
+  for(const w of wv){
+    gw.append(sv('line', {x1:xt(w.t), x2:xt(w.t), y1:pad.t, y2:H-pad.b, stroke:'var(--crit)', 'stroke-width':1.5, 'stroke-dasharray':'3 3'}));
+    gw.append(sv('text', {x:xt(w.t), y:pad.t - 10, 'text-anchor':'middle'}, W < 520 ? `${w.w}` : `onda ${w.w}`));
+  }
+  svg.append(gw);
+  let d = ''; for(let i = 0; i < n; i++) d += (i ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(v[i]).toFixed(1);
+  svg.append(sv('path', {d, fill:'none', stroke:'var(--ink)', 'stroke-width':2, 'stroke-linejoin':'round', 'stroke-linecap':'round'}));
+  const cur = sv('line', {y1:pad.t, y2:H-pad.b, stroke:'var(--mut)', 'stroke-width':1.5, id:'cur'});
+  const dot = sv('circle', {r:4.5, fill:'var(--ink)', stroke:'var(--panel)', 'stroke-width':2, id:'curdot'});
+  const hov = sv('line', {y1:pad.t, y2:H-pad.b, stroke:'var(--mut)', 'stroke-width':1, 'stroke-dasharray':'2 3', visibility:'hidden'});
+  svg.append(cur, hov, dot);
+  const hit = sv('rect', {x:pad.l, y:pad.t, width:W-pad.l-pad.r, height:H-pad.t-pad.b, fill:'transparent', style:'cursor:crosshair'});
+  svg.append(hit);
+  box.prepend(svg);
+  CH = {x, y, v, n};
+  const near = ev => { const r = svg.getBoundingClientRect(); const px = (ev.clientX - r.left) * W / r.width; let best = 0, bd = Infinity; for(let i = 0; i < n; i++){ const dd = Math.abs(x(i) - px); if(dd < bd){ bd = dd; best = i; } } return best; };
+  hit.addEventListener('pointermove', ev => {
+    const i = near(ev); hov.setAttribute('x1', x(i)); hov.setAttribute('x2', x(i)); hov.setAttribute('visibility','visible');
+    tip.replaceChildren(el('b', {}, M.f(v[i]) + (sd ? ` ± ${M.f(sd[i])}` : '')), document.createTextNode(`${M.n} · t = ${fmt(tAt(i),0)} s · ciclo ${i + 1}`));
+    tip.style.display = 'block';
+    const r = svg.getBoundingClientRect(); const px = x(i) * r.width / W;
+    const tw = tip.offsetWidth; tip.style.left = Math.max(0, Math.min(r.width - tw, px + 10)) + 'px'; tip.style.top = '4px';
+  });
+  hit.addEventListener('pointerleave', () => { tip.style.display = 'none'; hov.setAttribute('visibility','hidden'); });
+  hit.addEventListener('click', ev => { stop(); setK(near(ev)); });
+  $('#charttitle').textContent = M.n + (S.mean ? ' — média ± DP ao longo das 35 rodadas' : '');
+  const L = $('#legend'); L.replaceChildren();
+  const li = (cls, txt) => { const s = el('span'); s.append(el('i', {class:'lk ' + cls}), document.createTextNode(txt)); L.append(s); };
+  li('', S.mean ? 'média' : S.local ? 'arquivo local' : `rodada ${S.run}`);
+  if(sd) li('bd', '± 1 DP');
+  if(key === 'pt' && m) li('dash', 'limiar S1 do grupo');
+  if(wv.length) li('wv', 'onda de falha (tempo real)');
+  li('cur', 'ciclo atual');
+  const T = $('#charttable'); T.replaceChildren();
+  const th = el('tr'); th.append(el('th', {}, 'Ciclo'), el('th', {}, 't (s)'), el('th', {}, M.n)); if(sd) th.append(el('th', {}, 'DP'));
+  const thead = el('thead'); thead.append(th); const tb = el('tbody');
+  for(let i = 0; i < n; i++){ const tr = el('tr'); tr.append(el('td', {}, String(i + 1)), el('td', {}, fmt(tAt(i),0)), el('td', {}, M.f(v[i]))); if(sd) tr.append(el('td', {}, M.f(sd[i]))); tb.append(tr); }
+  T.append(thead, tb);
+  moveCursor(S.k);
+}
+function moveCursor(k){
+  if(!CH) return; const c = $('#cur'), d = $('#curdot'); if(!c || k >= CH.n) return;
+  c.setAttribute('x1', CH.x(k)); c.setAttribute('x2', CH.x(k)); d.setAttribute('cx', CH.x(k)); d.setAttribute('cy', CH.y(CH.v[k]));
+}
+
+// ---------------------------------------------------------------- tabela comparativa
+const mean = a => a.reduce((s, x) => s + x, 0) / a.length;
+const sdev = a => { const m = mean(a); return Math.sqrt(a.reduce((s, x) => s + (x - m) ** 2, 0) / (a.length - 1)); };
+async function buildCompare(){
+  const gs = S.idx.grupos.filter(g => g.n === S.n);
+  try { await Promise.all(gs.map(g => loadGroup(g.id))); } catch(e){ showError(e.message); return; }
+  $('#cmpsub').textContent = `N = ${S.n} · média ± DP ao longo das 35 rodadas`;
+  const sum = (r, key) => r.d[ci(key)].reduce((s, x) => s + x, 0);
+  const rows = [
+    ['QI final (t = 890 s)', r => r.d[ci('qi')][144], x => pct(x, 1)],
+    ['SR final (t = 890 s)', r => r.d[ci('sr')][144], x => pct(x, 1)],
+    ['QI mínimo na rodada', r => Math.min(...r.d[ci('qi')]), x => pct(x, 1)],
+    ['pThreat médio na rodada', r => mean(r.d[ci('pt')]), x => fmt(x, 3)],
+    ['Órfãos (soma na rodada)', r => sum(r, 'orf'), x => fmt(x, 1)],
+    ['REALLOCATE (soma na rodada)', r => sum(r, 'rea'), x => fmt(x, 1)],
+    ['RECLUSTER (soma na rodada)', r => sum(r, 'rec'), x => fmt(x, 1)],
+    ['DO_NOTHING (soma na rodada)', r => sum(r, 'dn'), x => fmt(x, 1)],
+  ];
+  const T = $('#cmp'); T.replaceChildren();
+  const hr = el('tr'); hr.append(el('th', {}, 'Métrica'));
+  for(const g of gs) hr.append(el('th', {class: g.cen === S.cen ? 'cur' : ''}, CEN[g.cen]));
+  const thead = el('thead'); thead.append(hr); const tb = el('tbody');
+  for(const [name, f, fm] of rows){
+    const tr = el('tr'); tr.append(el('td', {}, name));
+    for(const g of gs){ const vals = S.groups[g.id].runs.map(f); const td = el('td', {class: g.cen === S.cen ? 'cur' : ''}, fm(mean(vals))); td.append(el('span', {class:'sdv'}, ` ± ${fm(sdev(vals))}`)); tr.append(td); }
+    tb.append(tr);
+  }
+  const extra = [
+    ['% S1 das decisões (soma das 35 rodadas)', g => { const rs = S.groups[g.id].runs; const a = rs.reduce((s, r) => s + sum(r, 's1'), 0), b = rs.reduce((s, r) => s + sum(r, 's2'), 0); return a + b ? `${fmt(100 * a / (a + b), 1)}%` : 'sem decisões (nenhum órfão)'; }],
+    ['ε ao fim da série (rodada 35)', g => fmt(S.groups[g.id].runs[34].fim.eps, 4)],
+    ['Limiar S1 / ξ do grupo', g => `${fmt(g.thS1, 3)} / ${fmt(g.xi, 3)}`],
+  ];
+  for(const [name, f] of extra){ const tr = el('tr'); tr.append(el('td', {}, name)); for(const g of gs) tr.append(el('td', {class: g.cen === S.cen ? 'cur' : ''}, f(g))); tb.append(tr); }
+  T.append(thead, tb);
+  $('#cmpnote').textContent = 'Os cenários são execuções independentes entre si (cargas sorteadas separadamente); dentro de cada grupo, as 35 rodadas são episódios encadeados pelo knowledge.dat. Cada célula com ± resume primeiro cada rodada e depois tira média e DP amostral dos 35 resumos.' + (S.n === 300 ? ' Em N = 300, “sem falhas” é pré-calibragem e “com falhas” é pós-calibragem.' : '');
+}
+
+// ---------------------------------------------------------------- método
+function buildMethod(){
+  const T = $('#ptab'); T.replaceChildren();
+  const hr = el('tr'); ['Grupo','N','Cenário','Limiar S1','ξ','Override','Origem'].forEach(h => hr.append(el('th', {}, h)));
+  const thead = el('thead'); thead.append(hr); const tb = el('tbody');
+  for(const g of S.idx.grupos){ const tr = el('tr'); [g.id, String(g.n), CEN[g.cen], fmt(g.thS1,3), fmt(g.xi,3), g.override ? 'sim' : 'não', g.origem].forEach(c => tr.append(el('td', {}, c))); tb.append(tr); }
+  T.append(thead, tb);
+  const U = $('#runevid'); U.replaceChildren();
+  for(const g of S.idx.grupos){
+    const li = el('li'); li.append(el('code', {}, g.id), document.createTextNode(': ' + g.run_evid + (g.run_evid_check ? `. Prefixo do log idêntico ao de ${g.run_evid_check.ref} em ${g.run_evid_check.iguais}/${g.run_evid_check.total} rodadas.` : '.')));
+    U.append(li);
+  }
+  U.append(el('li', {}, 'Limite da evidência: não há nos dados uma execução com outro --run que sirva de controle negativo.'));
+  $('#commitinfo').textContent = `Dados gerados pelo commit ${S.idx.commit_codigo.slice(0, 12)} do repositório synapt (${S.idx.nota_commit}).`;
+}
+
+// ---------------------------------------------------------------- CSV local
+const MAXB = 20 * 1024 * 1024;
+function parseLocalCsv(text){
+  const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim() !== '');
+  if(!lines.length) throw new Error('arquivo vazio');
+  const head = lines[0].split(',');
+  if(head.join(',') !== CSV_HEADER.join(',')) throw new Error('cabeçalho diferente do IntuitiveStats.csv original (18 colunas)');
+  if(lines.length < 2) throw new Error('nenhuma linha de dados');
+  const t = [], d = COLS.map(() => []);
+  for(let i = 1; i < lines.length; i++){
+    const f = lines[i].split(',');
+    if(f.length !== 18) throw new Error(`linha ${i + 1}: ${f.length} campos (esperado 18)`);
+    const nums = f.map(Number);
+    const bad = nums.findIndex(x => !Number.isFinite(x));
+    if(bad >= 0) throw new Error(`linha ${i + 1}, coluna ${CSV_HEADER[bad]}: valor não numérico`);
+    if(t.length && nums[0] <= t[t.length - 1]) throw new Error(`linha ${i + 1}: timestamp não é estritamente crescente`);
+    t.push(nums[0]); for(let c = 0; c < 17; c++) d[c].push(nums[c + 1]);
+  }
+  return {t, d};
+}
+function fileMsg(txt, bad){ const m = $('#fmsg'); m.textContent = txt; m.className = bad ? 'bad' : ''; }
+async function loadFile(){
+  const f = $('#fi').files[0];
+  if(!f){ fileMsg('Escolha um arquivo primeiro.', true); return; }
+  if(/\.json$/i.test(f.name)){ fileMsg('Traces JSON chegam na Fase B; nesta versão o botão aceita apenas IntuitiveStats.csv.', true); return; }
+  if(!/\.csv$/i.test(f.name)){ fileMsg('Formato não suportado: use um arquivo .csv (IntuitiveStats.csv).', true); return; }
+  if(f.size > MAXB){ fileMsg(`Arquivo com ${fmt(f.size / 1048576, 1)} MiB; o limite é 20 MiB.`, true); return; }
+  try {
+    const parsed = parseLocalCsv(await f.text());
+    stop(); S.local = {name: f.name, ...parsed}; S.k = 0; S.mean = false;
+    syncControls(); renderNotes(); render(0); drawChart();
+    fileMsg(`Carregado: ${f.name} (${parsed.t.length} ciclos). O replay acima mostra este arquivo.`);
+    location.hash = '#sim';
+  } catch(e){ fileMsg(`Arquivo inválido: ${e.message}.`, true); }
+}
+
+// ---------------------------------------------------------------- tema
+function setTheme(mode){ document.documentElement.setAttribute('data-theme', mode); try { localStorage.setItem('synapt-theme', mode); } catch(e){} drawChart(); }
+function initTheme(){
+  let saved = null; try { saved = localStorage.getItem('synapt-theme'); } catch(e){}
+  if(saved === 'light' || saved === 'dark') document.documentElement.setAttribute('data-theme', saved);
+  $('#theme').onclick = () => {
+    const cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    setTheme(cur === 'dark' ? 'light' : 'dark');
+  };
+}
+
+// ---------------------------------------------------------------- início
+async function init(){
+  initTheme();
+  $('#ld').onclick = loadFile;
+  try { S.idx = await getJSON('data/index.json'); checkIndex(S.idx); }
+  catch(e){ showError(e.message); return; }
+  buildControls(); buildMethod();
+  let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(drawChart, 120); });
+  await select({});
+}
+init();
+})();
+</script>
+</body>
+</html>
