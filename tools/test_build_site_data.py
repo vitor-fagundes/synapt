@@ -27,7 +27,12 @@ REAL_ROOT = os.path.dirname(HERE)
 REAL_RESULTS = os.path.join(REAL_ROOT, "results-synapt")
 GEN = os.path.join(HERE, "build_site_data.py")
 PREFIX_KEEP = 1500
-TAGS = ("FAILURE_", "CENARIO4", "DENSITY_OVERRIDE", "INTUITIVE_PERSIST")
+TAGS = ("FAILURE_", "CENARIO4", "DENSITY_OVERRIDE", "INTUITIVE", "LR: ", "AP: fe80", "N: LS ", "N: IP ",
+        "N: BecomeLeader")
+
+
+def tagged(ln):
+    return ln.startswith(TAGS) or " elects " in ln
 
 sys.path.insert(0, HERE)
 import build_site_data as bsd  # noqa: E402
@@ -41,11 +46,11 @@ def filtered_log(src, dst):
                 if ln.startswith("N: C ") or i >= PREFIX_KEEP:
                     seen_c = True
                     g.write("N: C fixture\n")
-                    if ln.startswith(TAGS):
+                    if tagged(ln):
                         g.write(ln)
                     continue
                 g.write(ln)
-            elif ln.startswith(TAGS):
+            elif tagged(ln):
                 g.write(ln)
 
 
@@ -81,6 +86,7 @@ class GeneratorTests(unittest.TestCase):
         base = os.path.join(cls.base_tmp, "base")
         os.makedirs(os.path.join(base, "tools"))
         shutil.copyfile(GEN, os.path.join(base, "tools", "build_site_data.py"))
+        shutil.copyfile(os.path.join(HERE, "trace_from_log.py"), os.path.join(base, "tools", "trace_from_log.py"))
         shutil.copyfile(os.path.join(REAL_ROOT, "README.md"), os.path.join(base, "README.md"))
         os.makedirs(os.path.join(base, "plots", "data"))
         shutil.copyfile(os.path.join(REAL_ROOT, "plots", "data", "failure_response.csv"),
@@ -147,15 +153,21 @@ class GeneratorTests(unittest.TestCase):
 
     # ------------------------------------------------------------ caminho feliz
 
-    def test_happy_path_preserves_traces(self):
-        before = self.seed_out({"trace_200_with_failures_r002.json": '{"model":"synapt"}'})
+    def test_happy_path_regenerates_traces(self):
+        before = self.seed_out({"trace_200_with_failures_r002.json": '{"antigo":true}'})
         code, txt = self.run_gen()
         self.assertEqual(code, 0, txt[-3000:])
+        import json
+        with open(os.path.join(self.out, "index.json")) as f:
+            idx = json.load(f)
+        self.assertEqual(len(idx["traces"]), 7 * 35, idx.get("sem_trace", [])[:3])
+        self.assertEqual(idx["sem_trace"], [])
         names = set(os.listdir(self.out))
-        self.assertEqual(names, {"index.json", "trace_200_with_failures_r002.json"} |
-                         {f"{g}.json" for g, _, _ in bsd.GROUPS})
-        self.assertEqual(snapshot(self.out)["trace_200_with_failures_r002.json"],
-                         before["trace_200_with_failures_r002.json"])
+        self.assertEqual(names, {"index.json"} | {f"{g}.json" for g, _, _ in bsd.GROUPS} |
+                         {x["f"] for x in idx["traces"]})
+        with open(os.path.join(self.out, "trace_200_with_failures_r002.json")) as f:
+            tr = json.load(f)
+        self.assertEqual((tr["model"], tr["g"], tr["r"]), ("synapt", "200_with_failures", 2))
         self.assertNotEqual(snapshot(self.out)["index.json"], before["index.json"])
         self.assertFalse(os.path.lexists(os.path.join(self.repo, ".site-build-tmp")))
         self.assertIn("divergência aceita", txt)
@@ -252,9 +264,29 @@ class GeneratorTests(unittest.TestCase):
         alvo = os.path.join(self.repo, "alvo.json")
         with open(alvo, "w") as f:
             f.write("{}")
-        os.symlink(alvo, os.path.join(self.out, "trace_x.json"))
-        before["trace_x.json"] = b"{}"
+        os.symlink(alvo, os.path.join(self.out, "trace_200_no_failures_r001.json"))
+        before["trace_200_no_failures_r001.json"] = b"{}"
         self.assertIntact(*self.run_gen(), 2, before)
+
+    def test_unknown_trace_name_rejected(self):
+        before = self.seed_out({"trace_x.json": "{}"})
+        self.assertIntact(*self.run_gen(), 2, before)
+
+    def test_dirty_trace_parser_without_allow_dirty(self):
+        before = self.seed_out()
+        p = os.path.join(self.repo, "tools", "trace_from_log.py")
+        with open(p) as f:
+            text = f.read()
+        replace_file(p, text + "\n# alteração local\n")
+        self.assertIntact(*self.run_gen(), 2, before)
+
+    def test_max_trace_file(self):
+        before = self.seed_out()
+        self.assertIntact(*self.run_gen("--max-trace-file", "100"), 4, before)
+
+    def test_max_trace_bytes(self):
+        before = self.seed_out()
+        self.assertIntact(*self.run_gen("--max-trace-bytes", "1000"), 4, before)
 
     def test_unknown_file_in_out_rejected(self):
         before = self.seed_out({"notas.txt": "meu arquivo"})
@@ -352,6 +384,37 @@ class RoundTripTests(unittest.TestCase):
                     self.assertLessEqual(abs(g["agg"]["m"][i][k] - statistics.fmean(vals)), tol)
                     self.assertLessEqual(abs(g["agg"]["sd"][i][k] - statistics.stdev(vals)), tol)
         self.assertEqual(checked, 7 * 35 * 17 * 145)
+
+    def test_traces_match_regeneration_and_csv(self):
+        """Cada (grupo, rodada) está em traces ou em sem_trace (nunca nos dois); cada trace publicado
+        é idêntico ao regerado do log real e suas contagens por ciclo batem com o CSV bruto."""
+        import json
+        import trace_from_log as tfl
+        out = os.path.join(REAL_ROOT, "site", "data")
+        if not os.path.isfile(os.path.join(out, "index.json")):
+            self.skipTest("site/data ainda não gerado")
+        with open(os.path.join(out, "index.json")) as f:
+            idx = json.load(f)
+        if "traces" not in idx or not idx["traces"]:
+            self.skipTest("site/data sem traces (gerado antes da Fase B)")
+        com = {(x["g"], x["r"]) for x in idx["traces"]}
+        sem = {(x["g"], x["r"]) for x in idx.get("sem_trace", [])}
+        todos = {(m["id"], r) for m in idx["grupos"] for r in range(1, 36)}
+        self.assertFalse(com & sem)
+        self.assertEqual(com | sem, todos)
+        th = {m["id"]: m["thS1"] for m in idx["grupos"]}
+        for x in idx["traces"]:
+            g, r = x["g"], x["r"]
+            d = os.path.join(REAL_RESULTS, g, f"run_{r:03d}")
+            cols = bsd.parse_stats(os.path.join(d, "IntuitiveStats.csv"))
+            with open(os.path.join(out, x["f"])) as f:
+                pub = json.load(f)
+            regen, motivo = tfl.build_trace(os.path.join(d, "simulation.log"), cols, int(g[:3]), g, r, th[g])
+            self.assertIsNone(motivo, f"{g} r{r}")
+            self.assertEqual(pub, json.loads(bsd.dumps(regen)), f"{g} r{r}")
+            for k, c in enumerate(tfl.role_counts(pub)):
+                self.assertEqual((c["orfao"], c["s1"], c["s2"]),
+                                 (cols[tfl.C_ORF][k], cols[tfl.C_S1][k], cols[tfl.C_S2][k]), f"{g} r{r} k{k}")
 
     def test_s1_iff_pthreat_above_group_threshold(self):
         """Em todo ciclo com órfãos, todas as decisões são S1 sse pThreat > limiar S1 do grupo,

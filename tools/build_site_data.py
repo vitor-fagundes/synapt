@@ -14,8 +14,11 @@ Contrato: docs/plano-simulador-web.md. Resumo:
 - Gera em .site-build-tmp/data/ (raiz do repositório) e troca site/data por
   dois os.rename. A troca não é atômica; é recuperável com
   `git checkout -- site/data`.
+- Fase B: gera também site/data/trace_<grupo>_r<NNN>.json para cada rodada que passa nas
+  verificações de tools/trace_from_log.py; as demais entram em index.json.sem_trace.
 - Códigos de saída: 0 ok; 2 erro de entrada/formato/ambiente/publicação;
-  3 divergência de validação não aceita; 4 tamanho acima de --max-bytes.
+  3 divergência de validação não aceita; 4 tamanho acima de --max-bytes
+  (index + grupos), --max-trace-bytes (soma dos traces) ou --max-trace-file.
 """
 import argparse
 import csv
@@ -27,6 +30,9 @@ import shutil
 import statistics
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import trace_from_log  # noqa: E402  (Fase B: trace de topologia a partir do simulation.log)
 
 T0, DT, NC = 170, 5, 145
 NRUNS = 35
@@ -509,8 +515,13 @@ def check_results_clean(root, results):
         fail(2, "git status --porcelain -- results-synapt não está vazio:\n" + out[:2000])
 
 
+def trace_name(gid, r):
+    return f"trace_{gid}_r{r:03d}.json"
+
+
 def known_names():
-    return {"index.json"} | {f"{g}.json" for g, _, _ in GROUPS}
+    return ({"index.json"} | {f"{g}.json" for g, _, _ in GROUPS} |
+            {trace_name(g, r) for g, _, _ in GROUPS for r in range(1, NRUNS + 1)})
 
 
 def check_out_dir(root, out):
@@ -524,7 +535,7 @@ def check_out_dir(root, out):
         p = os.path.join(out, e)
         if os.path.islink(p) or not os.path.isfile(p):
             fail(2, f"{p} não é arquivo regular (symlink ou diretório)")
-        if e not in known_names() and not re.fullmatch(r"trace_[\w.-]+\.json", e):
+        if e not in known_names():
             unknown.append(e)
     if unknown:
         fail(2, f"arquivos desconhecidos em {out}: {unknown}. Nada foi apagado; remova-os ou "
@@ -564,6 +575,8 @@ def main(argv=None):
     ap.add_argument("--failure-response", default=os.path.join(root, "plots", "data",
                                                                 "failure_response.csv"))
     ap.add_argument("--max-bytes", type=int, default=5_000_000)
+    ap.add_argument("--max-trace-bytes", type=int, default=4_000_000)
+    ap.add_argument("--max-trace-file", type=int, default=32_768)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--allow-dirty", action="store_true")
     a = ap.parse_args(argv)
@@ -588,10 +601,11 @@ def main(argv=None):
             check_out_dir(root, out)
             if os.path.lexists(tmp_root):
                 fail(2, f"{tmp_root} já existe; remova-o manualmente (nada foi apagado)")
-        gen_rel = os.path.relpath(os.path.abspath(__file__), root)
-        dirty = git(root, "status", "--porcelain", "--", gen_rel).strip()
+        gen_rel = [os.path.relpath(os.path.abspath(__file__), root),
+                   os.path.relpath(os.path.abspath(trace_from_log.__file__), root)]
+        dirty = git(root, "status", "--porcelain", "--", *gen_rel).strip()
         if dirty and not a.allow_dirty:
-            fail(2, f"{gen_rel} tem alteração não commitada; faça commit ou use --allow-dirty")
+            fail(2, f"{' / '.join(gen_rel)} com alteração não commitada; faça commit ou use --allow-dirty")
         commit = git(root, "rev-parse", "HEAD").strip() + ("-dirty" if dirty else "")
 
         check_layout(results)
@@ -626,19 +640,52 @@ def main(argv=None):
         if divs:
             fail(3, "divergência com o README além do arredondamento:\n" + "\n".join(divs))
 
+        # Fase B: um trace por rodada, verificado contra o CSV (tools/trace_from_log.py)
+        trace_files, traces_idx, sem_trace = {}, [], []
+        for meta in metas:
+            gid, n = meta["id"], meta["n"]
+            for r in range(1, NRUNS + 1):
+                log = os.path.join(run_dir(results, gid, r), "simulation.log")
+                tr, motivo = trace_from_log.build_trace(log, raw_by_group[gid][r - 1], n, gid, r,
+                                                        meta["thS1"])
+                if tr is None:
+                    sem_trace.append({"g": gid, "r": r, "motivo": motivo})
+                    continue
+                text = dumps(tr)
+                name = trace_name(gid, r)
+                trace_files[name] = text
+                traces_idx.append({"g": gid, "r": r, "f": name, "bytes": len(text.encode("utf-8"))})
+        print(f"Traces (Fase B): {len(traces_idx)}/{len(metas) * NRUNS} rodadas com trace; "
+              f"{len(sem_trace)} sem_trace")
+        motivos = {}
+        for s_ in sem_trace:
+            motivos.setdefault((s_["g"], s_["motivo"].split(":")[0]), []).append(s_["r"])
+        for (gid, mot), rs in sorted(motivos.items()):
+            print(f"  sem_trace {gid} [{mot}]: rodadas {rs}")
+
         index = {"v": 1, "commit_codigo": commit,
                  "nota_commit": "dados gerados de results-synapt/ nesse commit",
-                 "t0": T0, "dt": DT, "nc": NC, "cols": COLS, "grupos": metas, "traces": []}
+                 "t0": T0, "dt": DT, "nc": NC, "cols": COLS, "grupos": metas,
+                 "traces": traces_idx, "sem_trace": sem_trace}
         files = {"index.json": dumps(index)}
         for gid, g in groups.items():
             files[f"{gid}.json"] = dumps(compact_group(g))
         sizes = {k: len(v.encode("utf-8")) for k, v in files.items()}
+        total_a = sum(sizes.values())
+        total_t = sum(x["bytes"] for x in traces_idx)
+        max_t = max((x["bytes"] for x in traces_idx), default=0)
+        print(f"Tamanho: index + grupos {total_a} bytes; traces {total_t} bytes "
+              f"(maior arquivo {max_t} bytes)")
+        if total_a > a.max_bytes:
+            fail(4, f"index + grupos: {total_a} > --max-bytes {a.max_bytes}")
+        if total_t > a.max_trace_bytes:
+            fail(4, f"traces: {total_t} > --max-trace-bytes {a.max_trace_bytes}")
+        if max_t > a.max_trace_file:
+            fail(4, f"maior trace: {max_t} > --max-trace-file {a.max_trace_file}")
+        files.update(trace_files)
 
         if a.check_only:
-            total = sum(sizes.values())
-            print(f"--check-only: nada gravado; tamanho previsto {total} bytes")
-            if total > a.max_bytes:
-                fail(4, f"tamanho previsto {total} > --max-bytes {a.max_bytes}")
+            print(f"--check-only: nada gravado; tamanho previsto {total_a + total_t} bytes")
             return 0
 
         try:
@@ -655,16 +702,7 @@ def main(argv=None):
         for name, text in files.items():
             with open(os.path.join(tmp_data, name), "x", encoding="utf-8") as f:
                 f.write(text)
-        if os.path.isdir(out):
-            for e in sorted(os.listdir(out)):
-                if re.fullmatch(r"trace_[\w.-]+\.json", e):
-                    src = os.path.join(out, e)
-                    if os.path.islink(src) or not os.path.isfile(src):
-                        fail(2, f"{src} não é arquivo regular")
-                    shutil.copyfile(src, os.path.join(tmp_data, e))
         total = sum(os.path.getsize(os.path.join(tmp_data, e)) for e in os.listdir(tmp_data))
-        if total > a.max_bytes:
-            fail(4, f"tamanho total {total} > --max-bytes {a.max_bytes}")
         publish(tmp_root, tmp_data, out)
         check_results_clean(root, results)
         print(f"Publicado em {out}: {len(os.listdir(out))} arquivos, {total} bytes "
