@@ -306,6 +306,41 @@ Teste de ponta a ponta, versionado em `tools/test_site_e2e.mjs`, com comando ún
   - um upload de CSV válido funciona; CSV com timestamps decrescentes e um `.json` mostram as mensagens de erro e de "Fase B";
   - replay: clicar em "próximo" 28 vezes a partir do início mostra "ciclo 29 de 145" e t = 310 s.
 
-## Pendências da revisão final
+## Pendências da revisão final (goldfish 2026-11-25, NO-GO)
 
-(preenchida após a goldfish final)
+Relatório: 14 achados. Classificação pela Decisão 7:
+
+**Decisão fechada (não reabre):**
+- README contradiz tempos, parâmetros de N=300, linha "300 com falhas" e `--run`: Decisão 1.
+- README omite `250_random_failures` e descreve outra estrutura de pastas: coberto pela Decisão 1; o site lista também essas duas diferenças na seção de método.
+
+**Lacuna de especificação ou escopo (grupos A/C; resolvida na implementação como indicado):**
+- e2e "obrigatório" × pulável: o pulo existe para outros ambientes; **nesta entrega o e2e é executado**, e a aceitação da Fase A exige essa execução.
+- `origem` e `nota` sem domínio:
+  - `origem` ∈ {"sectional@c5e78e0 (results-intuitive)", "synapt (results-synapt)"}, derivado do caminho do knowledgePath no log;
+  - `nota` é texto fixo por grupo, definido numa tabela no gerador.
+- Primeira publicação (`--out` inexistente) com falha no passo 5: não há rollback; `.site-build-tmp/` é removido e o código é 2.
+- JSON válido mas fora do schema: a página valida a presença e as dimensões de `cols`, `grupos`, `runs[].d` (17×145) e `agg`, e mostra "dados em formato inesperado: <campo>", sem `pageerror`.
+- Teste da falha do passo 5: testa `publish()` diretamente e afirma a exceção e a restauração de `--out`; o código 2 do CLI é testado à parte.
+- Ordem dos commits: o 2c (e2e) vem depois do 3 (página).
+- `run_evid_check`: exige prefixo comum ≥ 1000 linhas; não há controle negativo com outro `--run` (registrado no site como limite da evidência).
+- Proveniência de `run_simulations.sh`: citar o commit completo `c5e78e0` do repositório sectional (caminho local `scratch/sectional`).
+- Referência INTUIRT: permalink `https://github.com/carlosapepe/INTUIRT/tree/d135685`.
+- Upload: aceita qualquer nome com extensão `.csv`; o limite é 20 MiB (20 971 520 bytes).
+
+**Corretude dos dados, perda de dado, escrita fora de `site/`/`.site-build-tmp/` ou segurança:** ver "Achados levados ao usuário" abaixo.
+
+**Achados levados ao usuário (2026-11-25) e decisões:**
+- *Perda de dado na troca de `site/data`:* **rejeitar desconhecidos.**
+  - Se `site/data` tiver qualquer arquivo além de `index.json`, dos 7 `<grupo>.json` e de `trace_*.json`, o gerador aborta com código 2 sem apagar nada.
+  - Arquivo conhecido em `site/data` com alteração não commitada também dá código 2, mesmo com `--allow-dirty`, que não cobre `site/data`.
+  - Nada é descartado em silêncio.
+- *Prova de somente leitura de `results-synapt/`:* `tools/with_results_guard.sh <comando…>` envolve **toda** execução do gerador e dos testes:
+  1. aborta se estiver rodando como root (`id -u` = 0), porque o chmod não protege nesse caso;
+  2. `chmod -R a-w results-synapt`;
+  3. `git status --porcelain -- results-synapt` vazio;
+  4. manifesto de metadados `find results-synapt -printf '%P\t%s\t%T@\n' | LC_ALL=C sort | sha256sum`;
+  5. roda o comando;
+  6. repete os passos 3 e 4; os hashes de antes e depois têm de ser iguais;
+  7. `chmod -R u+w results-synapt` no fim, inclusive em erro (`trap`).
+  - Sem hash do conteúdo. Se uma checagem falhar, sai com código ≠ 0 e mostra qual.
