@@ -930,6 +930,8 @@ function drawTopo(k){
   ROLE_KEYS.forEach(r => sum.setAttribute('data-' + r.replace('_', '-'), String(cnt[r])));
   sum.setAttribute('data-s1', String(s1)); sum.setAttribute('data-s2', String(s2));
   sum.setAttribute('data-onda', st.waves.map(w => w.w).join(','));
+  // vetor completo papel:líder por nó (conferido contra tools/trace_from_log.py --vectors no e2e)
+  { const v = new Array(n); for(let i = 0; i < n; i++) v[i] = st.roles[i] + ':' + st.lid[i]; sum.setAttribute('data-vec', v.join(';')); }
   sum.replaceChildren();
   const row = (a, b) => sum.append(el('dt', {}, a), el('dd', {}, b));
   row(`Início do ciclo ${k + 1} (t = ${fmt(tAt(k), 0)} s)`, st.waves.length ? st.waves.map(w => `onda ${w.w}`).join(', ') : '');

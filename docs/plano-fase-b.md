@@ -312,3 +312,15 @@ legenda: "canvas: após as ações do ciclo; métricas: antes".
 
 Pendências:
 - A conferência Python × página compara contagens por papel, não o líder de cada nó.
+
+## Seguidores do recluster: o que o log registra (2026-11-25)
+
+- A2 dos novos líderes usa a linha `INTUITIVE_RECLUSTER: Novo cluster - Líder X com m seguidores`
+  (`NodeAPApplication.cc:1220`). Ela registra **só a quantidade** m, não quais nós seguem X.
+- Consequência: a legenda mantém "pertencimento a clusters novos não registrado no log", e os reclusterizados
+  continuam sem ligação (pendência 2 mantida).
+- Nota, sem implementação: nos 61 de 430 ciclos com recluster em que se forma um único cluster novo (2 338
+  seguidores), a identidade seria dedutível (candidatos RECLUSTER − pendentes − líder). Nos outros 369 ciclos
+  (24 536 seguidores), não. Por decisão do usuário, nenhuma ligação é inferida.
+- Pendência 1 resolvida: a conferência Python × página compara, em cada ciclo, o vetor completo papel:líder de cada
+  nó (5 rodadas, 173 000 pares nó×ciclo idênticos).

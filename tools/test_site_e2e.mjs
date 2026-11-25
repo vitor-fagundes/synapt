@@ -54,8 +54,8 @@ async function newPage(browser, opts, errors) {
 }
 const ready = page => page.waitForFunction(() => document.querySelectorAll('#kpis .kpi').length === 8 && document.querySelector('#cmp tbody tr'), null, { timeout: 15000 });
 const topoReady = page => page.waitForFunction(() => { const s = document.querySelector('#toposum'); return s && s.dataset.k !== undefined; }, null, { timeout: 15000 });
-function pyCounts(file) {
-  const r = spawnSync('python3', [path.join(HERE, 'trace_from_log.py'), '--counts', path.join(SITE, 'data', file)], { encoding: 'utf8' });
+function pyCounts(file, mode = '--counts') {
+  const r = spawnSync('python3', [path.join(HERE, 'trace_from_log.py'), mode, path.join(SITE, 'data', file)], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   if (r.status !== 0) throw new Error('trace_from_log.py --counts falhou: ' + r.stderr);
   return JSON.parse(r.stdout);
 }
@@ -188,11 +188,19 @@ try {
     for (const [n, cen, run] of [[200, 'with', 2], [250, 'with', 2], [250, 'random', 2], [300, 'with', 2], [200, 'with', 6]]) {
       await gotoRun(page, n, cen, run);
       const g = `${n}_${cen === 'random' ? 'random' : 'with'}_failures`;
-      const exp = pyCounts(`trace_${g}_r${String(run).padStart(3, '0')}.json`);
+      const f = `trace_${g}_r${String(run).padStart(3, '0')}.json`;
+      const exp = pyCounts(f), expVec = pyCounts(f, '--vectors');
       const got = await page.evaluate(() => { const t = document.querySelector('#tl'), out = []; for (let k = 0; k < 145; k++) { t.value = k; t.dispatchEvent(new Event('input')); out.push({ ...document.querySelector('#toposum').dataset }); } return out; });
       let bad = 0, first = '';
       for (let k = 0; k < 145; k++) for (const [a, b] of keys) if (+got[k][a] !== exp[k][b]) { bad++; if (!first) first = `k${k} ${a}: página ${got[k][a]} × Python ${exp[k][b]}`; }
-      check(`Python × página nos 145 ciclos: ${g} r${run}`, bad === 0, bad ? first : '145 ciclos × 10 contagens');
+      check(`Python × página nos 145 ciclos (contagens): ${g} r${run}`, bad === 0, bad ? first : '145 ciclos × 10 contagens');
+      let vbad = 0, vfirst = '', nodes = 0;
+      for (let k = 0; k < 145; k++) {
+        const a = (got[k].vec || '').split(';'), b = expVec[k].split(';'); nodes += b.length;
+        if (a.length !== b.length) { vbad++; if (!vfirst) vfirst = `k${k}: ${a.length} × ${b.length} nós`; continue; }
+        for (let i = 0; i < b.length; i++) if (a[i] !== b[i]) { vbad++; if (!vfirst) vfirst = `k${k} nó ${i}: página ${a[i]} × Python ${b[i]} (papel:líder)`; }
+      }
+      check(`Python × página nos 145 ciclos (vetor papel:líder por nó): ${g} r${run}`, vbad === 0, vbad ? `${vbad} divergências; ${vfirst}` : `${nodes} pares nó×ciclo idênticos`);
     }
     await page.check('#mean'); await page.waitForTimeout(300);
     check('modo média: topologia "disponível por rodada"', (await page.textContent('#topomsg')).includes('disponível por rodada') && await page.$eval('#cv', c => c.hidden));

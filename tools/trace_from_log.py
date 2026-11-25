@@ -12,7 +12,8 @@ Contrato: docs/plano-fase-b.md (inclui as decisões do usuário ao fim do arquiv
 - `role_counts(trace)` resume esses estados por ciclo; usado pela verificação e pelo e2e.
 
 Uso na linha de comando (para o e2e):
-    python3 tools/trace_from_log.py --counts site/data/trace_<grupo>_r<NNN>.json
+    python3 tools/trace_from_log.py --counts  site/data/trace_<grupo>_r<NNN>.json
+    python3 tools/trace_from_log.py --vectors site/data/trace_<grupo>_r<NNN>.json
 """
 import json
 import math
@@ -416,10 +417,18 @@ def build_trace(log_path, cols, n, g, r, thS1):
     return tr, None
 
 
+def role_vectors(tr):
+    """Por ciclo, o vetor completo 'papel:líder' de cada nó (líder = -2 se desconhecido),
+    no mesmo formato que site/index.html grava em #toposum[data-vec]."""
+    return [";".join(f"{ro}:{l}" for ro, l in zip(st["roles"], st["lid"])) for st in reconstruct(tr)]
+
+
 if __name__ == "__main__":
-    if len(sys.argv) == 3 and sys.argv[1] == "--counts":
+    if len(sys.argv) == 3 and sys.argv[1] in ("--counts", "--vectors"):
         with open(sys.argv[2]) as f:
-            print(json.dumps(role_counts(json.load(f)), separators=(",", ":")))
+            tr = json.load(f)
+        fn = role_counts if sys.argv[1] == "--counts" else role_vectors
+        print(json.dumps(fn(tr), separators=(",", ":")))
     else:
         print(__doc__)
         sys.exit(2)
