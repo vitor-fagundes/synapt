@@ -276,3 +276,21 @@ não confiável, limite de 20 MiB, só `textContent`). Alternativa: trocar o tex
 **E. Momento do canvas.** No ciclo k, o canvas mostra o estado **depois** das ações do ciclo (com o anel âmbar
 nos órfãos de `o[k]`), enquanto QI, SR e pThreat do ciclo são de **antes** das ações. Isso entra no ponto (c) e na
 legenda: "canvas: após as ações do ciclo; métricas: antes".
+
+## Decisões do usuário sobre a revisão (2026-11-25) — valem sobre o corpo acima
+
+1. **A1 e A2 são obrigatórias.** A1 compara `round(SR × vivos)` com um inteiro (o SR tem 6 casas no CSV), nunca
+   por igualdade de float. Falha → `sem_trace`.
+2. **"Fora de cluster"** é recalculado a cada ciclo; a ligação é desenhada quando o nó eleito vira líder.
+3. **Conferência Python × página** nos 145 ciclos, em pelo menos 1 rodada por grupo com falhas.
+4. **Sem upload de JSON.** O texto da página diz que o botão aceita só `IntuitiveStats.csv` e que os traces são
+   gerados pelo `build_site_data.py`.
+5. **Momento do canvas invertido:** no ciclo k, o canvas mostra o estado **antes** das ações (o mesmo instante de
+   QI, SR e pThreat), com a decisão de cada órfão sobreposta (ação + S1/S2). O resultado aparece no ciclo k+1.
+   - Legenda: "estado no início do ciclo; marcas = decisões deste ciclo".
+   - A conferência do item 3 usa esse instante.
+6. **(a)–(d) aprovados.** Em (a), as posições são calculadas na página a partir dos parâmetros da grade e de N;
+   o trace **não** grava `pos`.
+7. **Guard:** grava a permissão original de cada caminho (stat) e restaura a partir dela.
+8. **Seção Método:** nós que elegem um nó que nunca vira líder ficam fora de cluster desde o início; não são
+   órfãos e não passam pelo mecanismo de recuperação; isso explica SR < 100% mesmo sem falhas.
