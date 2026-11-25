@@ -198,6 +198,81 @@ A página só faz `fetch` de traces listados.
 - (d) A verificação 7 (consistência dos órfãos com o estado reconstruído) também leva a `sem_trace`, além das
   verificações que você exigiu.
 
-## Pendências da revisão (preenchida após advisor + goldfish)
+## Pendências da revisão (advisor + goldfish, 2026-11-25; goldfish NO-GO)
 
-(vazia)
+Relatório completo da goldfish: `/home/ubuntu/synapt-simulador-web/goldfish-fase-b.txt` (11 achados). Lacunas de
+especificação (grupos A/C), a resolver na implementação como indicado:
+
+1. **Decisões (a)–(d) pendentes**, embora o plano diga "congelado": dependem do OK do usuário (seção abaixo).
+2. **O guard muda os modos de `results-synapt/`.** Verificado em 2026-11-25: todos os 1 978 arquivos são 644, os
+   289 diretórios são 755 e nenhum estava sem `u+w`. Logo, `a-w` seguido de `u+w` restaura exatamente os modos.
+   Opcional: o guard passar a salvar e restaurar os modos.
+3. **`validate_palette.js`** é o script da skill de visualização, usado no desenvolvimento; não é arquivo do
+   repositório. O resultado vai na mensagem de commit.
+4. **Assinaturas:**
+   - `build_trace(log_path, stats_cols, n, g, r, thS1) -> (trace | None, motivo | None)`;
+   - o gerador injeta `g`, `r` e `thS1` e serializa;
+   - `verify()` é chamado dentro de `build_trace`.
+5. **Tabela de erros:**
+   - o que a Fase A já trata como código 2 continua código 2 (CSV, Q-values, log ausente ou ilegível);
+   - todo problema específico do trace vira `SemTrace` com motivo: linha malformada ou duplicada de eleição, onda,
+     órfão ou recluster; IP fora do domínio; divergência de contagem ou de consistência.
+6. **Precedência de papéis no desenho:** morto > órfão no ciclo > novo líder > líder > realocado >
+   reclusterizado > membro > fora de cluster. As linhas são redesenhadas do zero a cada ciclo, a partir do
+   estado reconstruído.
+7. **Anel âmbar = nó presente em `o[k]`.** Um órfão não resolvido reentra pelo `pendingOrphans`
+   (`NodeAPApplication.cc:948–963`). Verificação nova: não resolvido em k ⇒ presente em `o[k+1]`.
+8. **Validação do trace no cliente** antes de desenhar:
+   - `n` ∈ {200, 250, 300};
+   - `pos` e `lid0` com comprimento n;
+   - índices em [0, n);
+   - enums no domínio;
+   - `k` em [0, 145).
+   - Se falhar, aparece a faixa de erro "trace em formato inesperado: <campo>" e o canvas fica vazio.
+9. **Cobertura esperada:** 245/245, porque o protótipo deu 0 divergências. Um `sem_trace` vindo das verificações
+   5–7 ou das novas deve ser tratado como suspeita de defeito do parser: investigar a causa antes de publicar e
+   reportar, sem nunca tratar uma rodada como caso especial.
+10. **Invariantes do código usados**, todos em synapt@901ed81:
+    - pertencimento por `getMyLeader() == líder` (`NodeAPApplication.cc:741–752`);
+    - órfãos = líder morto ∪ `pendingOrphans` (`:924–963`);
+    - recluster e eleição do novo líder (`:1128–1222`);
+    - `becomeLeader` (`NodeApplication.cc`).
+11. **Fixture dos testes do gerador:** o filtro atual descarta as linhas de que o parser precisa. O caminho feliz
+    passa a manter `INTUITIVE*`, `FAILURE_*`, `N: LS`, `elects`, `N: IP`, `LR:` e `N: BecomeLeader`, e afirma o
+    número de traces publicados e o conteúdo de `index.traces`.
+12. **Menor:** as posições vêm do código (`contaski.cc`); o log só confirma a distância de cada nó ao AP.
+
+## Achados levados ao usuário (corretude dos dados; aguardam OK)
+
+**A. O pertencimento nó→líder não era verificado.** As linhas do canvas são a principal afirmação nova da Fase B,
+e o §2 só conferia órfãos. Verificações obrigatórias propostas:
+- **A1 — identidade do SR por ciclo:**
+  `round(SR[k] · vivos(k)) = vivos(k) − |o[k]| − fora_de_cluster(k)`, com `vivos(k)` = N − líderes mortos até o
+  ciclo k. Num protótipo com o papel derivado a cada ciclo (ver B), ela vale nas **245/245 rodadas, em todos os
+  145 ciclos**. Cobre também os grupos sem falhas.
+- **A2 — por onda:** o número `Líder X falhou … n nós órfãos` de cada líder que cai deve ser igual ao número de
+  membros reconstruídos de X.
+  - Para líderes iniciais, a contagem deve ser exata.
+  - Para novos líderes, o excedente sobre os membros conhecidos (eleitores e realocados) tem de ser coberto pelos
+    nós de pertencimento desconhecido.
+  - Na onda 1, `FAILURE_WAVE_ELIGIBLE … n real members` também é conferido.
+
+**B. "Fora de cluster" não é fixo.** Em **51 rodadas**, um nó eleito que não virou líder é depois promovido a novo
+líder por recluster. Pelo código (`getMyLeader() == líder`), quem o elegeu passa a ser membro desse cluster.
+- O pertencimento desses eleitores é conhecido exatamente pela eleição registrada; não é inferido.
+- O canvas desenha a linha até o novo líder a partir do ciclo seguinte à promoção.
+- Se esse líder cair, os eleitores aparecem como órfãos no log.
+- Com o papel fixo, a identidade do SR falha justamente nessas 51 rodadas; com o papel derivado por ciclo,
+  vale em todas.
+
+**C. O que o Python verifica tem de ser o que o JS desenha.** O e2e compara as contagens de papéis por ciclo
+mostradas pela página (resumo textual) com as da reconstrução em Python, nos 145 ciclos, em pelo menos uma rodada
+de cada grupo com falhas.
+
+**D. Upload de JSON.** A página da Fase A diz que "traces JSON chegam na Fase B", e o pedido original (A.4) previa
+isso. Proposta: aceitar no botão o `trace_*.json` da Fase B, com a mesma validação de schema do item 8 (entrada
+não confiável, limite de 20 MiB, só `textContent`). Alternativa: trocar o texto da página.
+
+**E. Momento do canvas.** No ciclo k, o canvas mostra o estado **depois** das ações do ciclo (com o anel âmbar
+nos órfãos de `o[k]`), enquanto QI, SR e pThreat do ciclo são de **antes** das ações. Isso entra no ponto (c) e na
+legenda: "canvas: após as ações do ciclo; métricas: antes".
