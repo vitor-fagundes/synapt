@@ -38,3 +38,39 @@ O gerador recusa:
 - `git status --porcelain -- results-synapt` não vazio.
 
 Se a troca de `site/data` falhar, recupere com `git checkout -- site/data`.
+
+## Testar
+
+```bash
+# gerador (21 testes, num repositório de teste temporário; nada é gravado em results-synapt/ nem em site/)
+tools/with_results_guard.sh python3 -m unittest tools/test_build_site_data.py -v
+
+# página: servidor local
+cd site && python3 -m http.server 8000      # abra http://localhost:8000
+
+# página: teste de ponta a ponta (Playwright + Chromium); pulado com aviso se o playwright não estiver instalado
+(cd tools && npm install && npx playwright install chromium)   # uma vez, na raiz do repositório
+tools/with_results_guard.sh bash -c 'cd tools && node test_site_e2e.mjs /tmp/capturas-synapt'
+```
+
+Abrir `index.html` com duplo clique não funciona: o navegador bloqueia o `fetch` de arquivos locais e a
+página mostra a faixa de erro. Use o servidor local.
+
+## Publicar
+
+1. No GitHub: **Settings → Pages → Source: GitHub Actions**.
+2. O workflow `.github/workflows/pages.yml` publica **somente `site/`** a cada push em `synapt-v1`, ou
+   manualmente em **Actions → Pages → Run workflow**. `results-synapt/` (~1,6 GB) não vai para o
+   Pages, que tem limite de 1 GB.
+3. Os caminhos do `fetch` são relativos (`data/index.json`, `data/<grupo>.json`) e batem com os
+   arquivos publicados.
+
+## Conteúdo
+
+| Arquivo | O que é |
+|---|---|
+| `index.html` | Página única (HTML, CSS e JS inline; só as fontes Spectral e Inter vêm do Google Fonts) |
+| `data/index.json` | Grupos, parâmetros por grupo (limiar S1, ξ, origem, evidência do `--run=0`), `t0=170`, `dt=5`, `nc=145` |
+| `data/<grupo>.json` | 35 rodadas × 17 métricas × 145 ciclos, ondas reais por rodada, Q-table/ε/S1-S2 ao fim de cada rodada e média ± DP por ciclo |
+
+A topologia por nó (Fase B) ainda não está disponível. O painel correspondente mostra "requer trace".
