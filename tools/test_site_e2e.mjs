@@ -92,6 +92,13 @@ try {
     await page.waitForTimeout(300);
     const notes = await page.textContent('#notes');
     check('N=300: aviso pré/pós-calibragem', notes.includes('pré-calibragem') && notes.includes('pós-calibragem'));
+    const kpt = await page.textContent('#kpt');
+    check('modo média: pThreat rotulado como média vs. limiar, sem "acima/abaixo do limiar"', kpt.includes('pThreat médio vs. limiar') && !kpt.includes('acima do limiar') && !kpt.includes('abaixo do limiar'), kpt);
+    await page.click('#segC button[data-c="with"]'); for (let i = 0; i < 28; i++) await page.click('#next');
+    const kact = await page.textContent('#kact'), kq = await page.textContent('#kq'), s1sd = await page.textContent('#s1sd'), accR = await page.textContent('#accR');
+    check('modo média: ± DP em ações, Q médio e S1/S2 do ciclo', kact.includes('±') && kq.includes('±') && s1sd.includes('±'), `${kact} | ${kq} | ${s1sd}`);
+    check('modo média: acumulado rotulado "média das 35 rodadas, sem DP"', accR.includes('média das 35 rodadas, sem DP'), accR);
+    await page.click('#segC button[data-c="no"]'); await page.waitForTimeout(200);
     const thr = await page.textContent('#thr');
     check('300 sem falhas: limiar 0,200 / ξ −0,050', thr.includes('0,200') && thr.includes('-0,050'), thr);
     await page.click('#segC button[data-c="with"]'); await page.waitForTimeout(200);
@@ -107,6 +114,14 @@ try {
     await page.click('#pp'); await page.waitForTimeout(1600); await page.click('#pp');
     const k = await page.$eval('#tl', e => +e.value);
     check('reproduzir/pausar avança o replay', k > 0, `ciclo ${k + 1}`);
+
+    // botão de tema
+    const theme0 = await page.evaluate(() => [document.documentElement.getAttribute('data-theme'), getComputedStyle(document.body).backgroundColor]);
+    await page.click('#theme'); await page.waitForTimeout(150);
+    const theme1 = await page.evaluate(() => [document.documentElement.getAttribute('data-theme'), getComputedStyle(document.body).backgroundColor]);
+    await page.click('#theme'); await page.waitForTimeout(150);
+    const theme2 = await page.evaluate(() => [document.documentElement.getAttribute('data-theme'), getComputedStyle(document.body).backgroundColor]);
+    check('botão de tema alterna claro/escuro e o fundo muda', theme1[0] === 'dark' && theme1[1] !== theme0[1] && theme2[0] === 'light' && theme2[1] === theme0[1], `${theme0} → ${theme1} → ${theme2}`);
 
     // upload de CSV
     const csv = csvFromGroup('200_with_failures', 2);

@@ -216,8 +216,8 @@ footer{padding:28px 0;color:var(--mut);font-size:13px;border-top:1px solid var(-
       <div class="card">
         <h3>Motor Dual-System <small id="dualsub">decisões por órfão</small></h3>
         <div class="dual">
-          <div class="box"><div class="lab"><i class="key s1"></i>S1 neste ciclo</div><b id="s1c">—</b></div>
-          <div class="box"><div class="lab"><i class="key s2"></i>S2 neste ciclo</div><b id="s2c">—</b></div>
+          <div class="box"><div class="lab"><i class="key s1"></i>S1 neste ciclo</div><b id="s1c">—</b><span class="small mut tab" id="s1sd"></span></div>
+          <div class="box"><div class="lab"><i class="key s2"></i>S2 neste ciclo</div><b id="s2c">—</b><span class="small mut tab" id="s2sd"></span></div>
         </div>
         <div class="bar" id="s12bar" aria-hidden="true"><i class="b1"></i><i class="b2"></i></div>
         <div class="small mut" id="s12txt">—</div>
@@ -461,6 +461,7 @@ function clearPanels(){
   ['#kpis','#cmp','#steps','#charttable','#legend','#qtab'].forEach(q => $(q).replaceChildren());
   document.querySelectorAll('#chart svg').forEach(e => e.remove()); CH = null;
   ['#s1c','#s2c','#accR','#accS','#eps','#thr','#s12txt'].forEach(q => $(q).textContent = '—');
+  ['#s1sd','#s2sd'].forEach(q => $(q).textContent = '');
   $('#clk').textContent = 't = — s'; $('#cyc').textContent = 'dados indisponíveis';
 }
 
@@ -517,26 +518,32 @@ function render(k){
   K.append(kpi('ksr', 'SR', MET.sr.f(val('sr',k)), withSd('sr',k,MET.sr.f)));
   const pt = val('pt', k);
   let ptd;
-  if(m){ ptd = el('span'); const up = pt > m.thS1; ptd.append(el('span', {class:'flag' + (up ? ' up' : '')}, up ? 'acima do limiar S1' : 'abaixo do limiar S1'), document.createTextNode(` ${fmt(m.thS1, 3)}` + (S.mean ? ` · ± ${fmt(sdv('pt',k),4)}` : ''))); }
+  if(m && S.mean){
+    ptd = el('span');
+    ptd.append(document.createTextNode(`± ${fmt(sdv('pt',k),4)} · média − limiar S1 (${fmt(m.thS1,3)}) = ${pt - m.thS1 >= 0 ? '+' : '−'}${fmt(Math.abs(pt - m.thS1),4)}`));
+  } else if(m){ ptd = el('span'); const up = pt > m.thS1; ptd.append(el('span', {class:'flag' + (up ? ' up' : '')}, up ? 'acima do limiar S1' : 'abaixo do limiar S1'), document.createTextNode(` ${fmt(m.thS1, 3)}`)); }
   else ptd = document.createTextNode('limiar desconhecido (arquivo local)');
-  K.append(kpi('kpt', 'pThreat', (m && Math.abs(pt - m.thS1) < 5e-4) ? fmt(pt, 6) : MET.pt.f(pt), ptd));
+  K.append(kpi('kpt', S.mean ? 'pThreat médio vs. limiar' : 'pThreat', (m && Math.abs(pt - m.thS1) < 5e-4) ? fmt(pt, 6) : MET.pt.f(pt), ptd));
   K.append(kpi('ktii', 'TII', MET.tii.f(val('tii',k)), withSd('tii',k,MET.tii.f)));
   const cnt = key => S.mean ? fmt(val(key,k), 2) : fmt(val(key,k), 0);
   K.append(kpi('korf', 'Órfãos no ciclo', cnt('orf'), withSd('orf',k,x=>fmt(x,2))));
   K.append(kpi('kan', 'Anomalias', cnt('an'), withSd('an',k,x=>fmt(x,2))));
-  const act = el('span'); act.append(document.createTextNode('REALLOCATE / RECLUSTER / DO_NOTHING'));
+  const sd3 = (a, b, c, d) => `± ${fmt(sdv(a,k),d)} / ${fmt(sdv(b,k),d)} / ${fmt(sdv(c,k),d)}`;
+  const act = el('span'); act.append(document.createTextNode(S.mean ? `${sd3('rea','rec','dn',2)} · REALLOCATE / RECLUSTER / DO_NOTHING` : 'REALLOCATE / RECLUSTER / DO_NOTHING'));
   K.append(kpi('kact', 'Ações R / C / D', `${cnt('rea')} / ${cnt('rec')} / ${cnt('dn')}`, act, S.mean));
-  const qd = el('span'); qd.append(document.createTextNode('D / R / C · média dos 3 estados, antes das ações'));
+  const qd = el('span'); qd.append(document.createTextNode((S.mean ? `${sd3('qd','qr','qc',1)} · ` : '') + 'D / R / C · média dos 3 estados, antes das ações'));
   K.append(kpi('kq', 'Q médio por ação', `${fmt(val('qd',k),1)} / ${fmt(val('qr',k),1)} / ${fmt(val('qc',k),1)}`, qd, true));
   // dual
   const s1 = val('s1', k), s2 = val('s2', k), tot = s1 + s2;
   $('#s1c').textContent = cnt('s1'); $('#s2c').textContent = cnt('s2');
+  $('#s1sd').textContent = S.mean ? `± ${fmt(sdv('s1',k),2)} (média ± DP)` : '';
+  $('#s2sd').textContent = S.mean ? `± ${fmt(sdv('s2',k),2)} (média ± DP)` : '';
   const bar = $('#s12bar'); bar.children[0].style.flex = String(tot ? s1 : 0); bar.children[1].style.flex = String(tot ? s2 : 0);
   bar.children[0].style.display = s1 > 0 ? 'block' : 'none'; bar.children[1].style.display = s2 > 0 ? 'block' : 'none';
-  $('#s12txt').textContent = tot > 0 ? `S1 ${fmt(100*s1/tot,0)}% · S2 ${fmt(100*s2/tot,0)}% das decisões do ciclo (S2 inclui S1+S2, quando S2 prevalece)` : 'Sem órfãos neste ciclo: nenhuma decisão S1/S2.';
+  $('#s12txt').textContent = tot > 0 ? (S.mean ? `Razão entre as médias: S1 ${fmt(100*s1/tot,0)}% · S2 ${fmt(100*s2/tot,0)}% (média das 35 rodadas, sem DP)` : `S1 ${fmt(100*s1/tot,0)}% · S2 ${fmt(100*s2/tot,0)}% das decisões do ciclo (S2 inclui S1+S2, quando S2 prevalece)`) : (S.mean ? 'Nenhuma rodada teve órfãos neste ciclo.' : 'Sem órfãos neste ciclo: nenhuma decisão S1/S2.');
   let a1 = 0, a2 = 0; const v1 = series('s1').v, v2 = series('s2').v;
   for(let i = 0; i <= k; i++){ a1 += v1[i]; a2 += v2[i]; }
-  $('#accR').textContent = S.mean ? `${fmt(a1,1)} / ${fmt(a2,1)} (média)` : `${fmt(a1,0)} / ${fmt(a2,0)}`;
+  $('#accR').textContent = S.mean ? `${fmt(a1,1)} / ${fmt(a2,1)} (média das 35 rodadas, sem DP)` : `${fmt(a1,0)} / ${fmt(a2,0)}`;
   if(m && !S.mean){
     const g = S.groups[m.id], prev = S.run > 1 ? g.runs[S.run-2].fim : {s1tot:0, s2tot:0};
     $('#accS').textContent = `${fmt(prev.s1tot + a1, 0)} / ${fmt(prev.s2tot + a2, 0)}`;
