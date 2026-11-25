@@ -225,6 +225,7 @@ footer{padding:28px 0;color:var(--mut);font-size:13px;border-top:1px solid var(-
           <dt>ε ao fim da rodada</dt><dd id="eps">—</dd>
           <dt>Limiar S1 / ξ do grupo</dt><dd id="thr">—</dd>
         </dl>
+        <details id="qfim"><summary>Q-table ao fim da rodada</summary><div class="tblwrap"><table id="qtab"></table></div></details>
         <div class="topo" id="topo"><b>Topologia</b><span>requer trace (Fase B)</span><span class="small">Nenhuma topologia é desenhada sem dados por nó.</span></div>
       </div>
     </div>
@@ -276,6 +277,8 @@ footer{padding:28px 0;color:var(--mut);font-size:13px;border-top:1px solid var(-
     </ul>
     <h3>Tempos reais</h3>
     <p>O AP inicia em t = 10 s e seus agendamentos são relativos a esse início. Por isso o primeiro ciclo registrado é t = 170 s (145 ciclos, até 890 s), e as ondas configuradas para 300/450/600 s disparam em 310/460/610 s. No cenário aleatório, cada onda dispara no tempo sorteado + 10 s.</p>
+    <h3>Quando cada métrica é registrada</h3>
+    <p>QI, SR, pThreat, TII, ARF, ρ, aprendizado médio e Q médios são registrados na etapa 4, <b>antes</b> do processamento dos órfãos do ciclo. Por isso o ciclo da onda mostra a queda (ex.: QI ≈ 0,79) e o seguinte já mostra o efeito das ações. Os contadores de órfãos, ações e S1/S2 são os do próprio ciclo.</p>
     <h3>Parâmetros por grupo</h3>
     <div class="tblwrap"><table id="ptab"></table></div>
     <h3>Diferenças em relação ao README</h3>
@@ -285,6 +288,7 @@ footer{padding:28px 0;color:var(--mut);font-size:13px;border-top:1px solid var(-
       <li>Calibragem: o README aplica o override de densidade a todo N ≥ 300. Nos logs, ele aparece nas 35 rodadas de <code>300_with_failures</code> e em nenhuma de <code>300_no_failures</code>, que foi gerado antes da calibragem. Em N = 300, sem falhas e com falhas usam parâmetros diferentes.</li>
       <li>A linha “300 nós — com falhas” da tabela de resultados do README (98,9% ± 0,6% / 98,6% ± 1,8%) corresponde ao grupo <code>300_with_failures_OLD_backup</code>, anterior à calibragem. Este site usa o <code>300_with_failures</code> atual.</li>
       <li>Os exemplos de execução do README usam <code>--run=1</code>; as séries publicadas usaram <code>--run=0</code>.</li>
+      <li>Recluster coletivo: o README diz que o órfão de maior Li vira líder. O código (<code>NodeAPApplication.cc</code>, linhas 1180–1194) elege o de mais capacidades, com desempate pelo menor IP.</li>
       <li>O README não lista o grupo <code>250_random_failures</code> e descreve outra organização de pastas; aqui cada rodada fica em <code>results-synapt/&lt;grupo&gt;/run_NNN/</code>.</li>
     </ul>
     <h3>Evidência do <code>--run=0</code></h3>
@@ -330,7 +334,7 @@ const CSV_HEADER = ['timestamp','qi','sr','tii','arf','meanRho','netLearning','p
 const COLS = ['qi','sr','tii','arf','rho','nl','pt','orf','rea','rec','dn','s1','s2','an','qd','qr','qc'];
 const INTC = new Set(['orf','rea','rec','dn','s1','s2','an']);
 const MET = {
-  qi:{n:'QI (Quality Index)', f:x=>pct(x)}, sr:{n:'SR (nós cobertos / N)', f:x=>pct(x)},
+  qi:{n:'QI (Quality Index)', f:x=>pct(x)}, sr:{n:'SR (alcançáveis / vivos)', f:x=>pct(x)},
   pt:{n:'pThreat', f:x=>fmt(x,4)}, tii:{n:'TII', f:x=>fmt(x,4)},
   orf:{n:'Órfãos no ciclo', f:x=>fmt(x,0)}, s1:{n:'Decisões S1 no ciclo', f:x=>fmt(x,0)}, s2:{n:'Decisões S2 no ciclo', f:x=>fmt(x,0)},
   rea:{n:'REALLOCATE no ciclo', f:x=>fmt(x,0)}, rec:{n:'RECLUSTER no ciclo', f:x=>fmt(x,0)}, dn:{n:'DO_NOTHING no ciclo', f:x=>fmt(x,0)},
@@ -342,11 +346,11 @@ const CEN = {no:'Sem falhas', with:'Com falhas', random:'Falhas aleatórias'};
 const STEPS = [
   ['Atualização dos clusters','Recontagem dos membros reais de cada cluster pelo campo myLeader de cada nó vivo.'],
   ['Detecção de anomalias','Taxa de aceite de tarefas, tempo desde o último contato e saúde do cluster de cada líder; anômalo só se os Z-scores global e temporal concordarem.'],
-  ['Aprendizado distribuído','Um passo da difusão de Li: ΔLi = Σ β·(Lj − Li) + ξi, com α = 0,20 e β = 0,10; líderes anômalos recebem ξ negativo.'],
-  ['Métricas globais','pThreat = 1 − média de Li dos líderes vivos; QI = 0,5·conectividade + 0,3·propagação + 0,2·entrega; SR e TII.'],
-  ['Processamento de órfãos','Para cada órfão: estado (EXISTING_VIABLE, ORPHAN_ONLY ou NO_MATCH, limiar 0,85); S1 se pThreat > limiar S1, senão S2 ε-greedy; ação REALLOCATE, RECLUSTER ou DO_NOTHING.'],
-  ['Recluster coletivo','Órfãos marcados para RECLUSTER são agrupados por similaridade ≥ 0,85; o de maior Li vira líder do novo cluster.'],
-  ['Persistência e decaimento','QI/SR recalculados após as ações; ε ← max(0,02; 0,97·ε) se houve órfãos; knowledge.dat salvo ao fim da rodada.'],
+  ['Aprendizado distribuído','Um passo da difusão de Li entre nós do mesmo cluster: ΔLi = Σ β·(Lj − Li) + ξi e Li ← Li + α·ΔLi (α = 0,20; β = 0,10). ξi é o ξ do grupo para líderes anômalos e +0,01 × fração de vizinhos vivos para os demais.'],
+  ['Métricas globais','pThreat = 1 − média de Li dos líderes vivos; QI = 0,5·conectividade + 0,3·propagação + 0,2·entrega; SR = nós alcançáveis / nós vivos; TII. É aqui, antes das ações, que o CSV registra QI, SR e pThreat.'],
+  ['Processamento de órfãos','Para cada órfão: estado (EXISTING_VIABLE, ORPHAN_ONLY ou NO_MATCH, limiar 0,85). Se pThreat > limiar S1, S1 consulta R_int (com heurística quando falta experiência); senão, se QI ou SR < 0,60, S2 prevalece (registrado como S1+S2 e contado como S2); senão, S2 ε-greedy. Ação inviável cai para a alternativa viável ou DO_NOTHING.'],
+  ['Recluster coletivo','Os marcados para RECLUSTER são agrupados em ordem: cada órfão ainda livre puxa os seguintes com similaridade ≥ 0,85. O de mais capacidades (desempate pelo menor IP) vira líder; quem fica sozinho volta à lista de pendentes.'],
+  ['Persistência e decaimento','QI/SR recalculados após as ações (esse valor não vai para o CSV); ε ← max(0,02; 0,97·ε) se houve órfãos; knowledge.dat salvo ao fim da rodada.'],
 ];
 const S = {idx:null, groups:{}, n:200, cen:'with', run:1, mean:false, k:0, playing:false, speed:1, metric:'qi', local:null, timer:null, stepTimer:null, stepNow:-1};
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -445,14 +449,23 @@ async function select(ch){
   if(!S.idx.grupos.some(g => g.n === S.n && g.cen === S.cen)) S.cen = 'with';
   try {
     if(!S.local){ await loadGroup(gmeta().id); }
-  } catch(e){ showError(e.message); return; }
+  } catch(e){ showError(e.message); clearPanels(); syncControls(); return; }
+  $('#err').classList.remove('on');
   if(S.k >= nc()) S.k = nc() - 1;
   syncControls(); renderNotes(); render(S.k); drawChart(); buildCompare();
+}
+
+function clearPanels(){
+  ['#kpis','#cmp','#steps','#charttable','#legend','#qtab'].forEach(q => $(q).replaceChildren());
+  document.querySelectorAll('#chart svg').forEach(e => e.remove()); CH = null;
+  ['#s1c','#s2c','#accR','#accS','#eps','#thr','#s12txt'].forEach(q => $(q).textContent = '—');
+  $('#clk').textContent = 't = — s'; $('#cyc').textContent = 'dados indisponíveis';
 }
 
 // ---------------------------------------------------------------- replay
 function setK(k){ S.k = Math.max(0, Math.min(nc() - 1, k)); render(S.k); }
 function play(){
+  if(!ready()) return;
   if(S.k >= nc() - 1) setK(0);
   S.playing = true; $('#pp').textContent = '❚❚ Pausar'; $('#pp').setAttribute('aria-label','Pausar');
   const tick = () => {
@@ -475,6 +488,7 @@ function ranSteps(k){
 }
 function animateSteps(){
   clearTimeout(S.stepTimer);
+  if(!ready()) return;
   if(reduced){ S.stepNow = -1; renderSteps(S.k); return; }
   const ran = ranSteps(S.k).map((r, i) => r ? i : -1).filter(i => i >= 0);
   const dt = (700 / S.speed) / ran.length;
@@ -490,6 +504,7 @@ function kpi(id, label, value, detail){
 }
 function withSd(key, k, f){ const s = sdv(key, k); return s === null ? null : document.createTextNode('± ' + f(s)); }
 function render(k){
+  if(!ready()) return;
   const m = S.local ? null : gmeta();
   const t = tAt(k);
   $('#clk').textContent = `t = ${fmt(t, 0)} s`;
@@ -509,7 +524,7 @@ function render(k){
   K.append(kpi('kan', 'Anomalias', cnt('an'), withSd('an',k,x=>fmt(x,2))));
   const act = el('span'); act.append(document.createTextNode('REALLOCATE / RECLUSTER / DO_NOTHING'));
   K.append(kpi('kact', 'Ações R / C / D', `${cnt('rea')} / ${cnt('rec')} / ${cnt('dn')}`, act));
-  const qd = el('span'); qd.append(document.createTextNode('D / R / C · média dos 3 estados'));
+  const qd = el('span'); qd.append(document.createTextNode('D / R / C · média dos 3 estados, antes das ações'));
   K.append(kpi('kq', 'Q médio por ação', `${fmt(val('qd',k),1)} / ${fmt(val('qr',k),1)} / ${fmt(val('qc',k),1)}`, qd));
   // dual
   const s1 = val('s1', k), s2 = val('s2', k), tot = s1 + s2;
@@ -526,10 +541,21 @@ function render(k){
     $('#eps').textContent = fmt(g.runs[S.run-1].fim.eps, 4);
   } else { $('#accS').textContent = '—'; $('#eps').textContent = S.mean ? '— (ver tabela)' : '—'; }
   $('#thr').textContent = m ? `${fmt(m.thS1,3)} / ${fmt(m.xi,3)}` : '—';
+  renderQ(m);
   renderSteps(k);
   moveCursor(k);
 }
 function ready(){ return !!S.idx && (!!S.local || !!S.groups[(gmeta() || {}).id]); }
+function renderQ(m){
+  const box = $('#qfim'), T = $('#qtab'); T.replaceChildren();
+  box.hidden = !m || S.mean;
+  if(box.hidden) return;
+  const Q = S.groups[m.id].runs[S.run-1].fim.Q;
+  const hr = el('tr'); ['Estado','DO_NOTHING','REALLOCATE','RECLUSTER'].forEach(h => hr.append(el('th', {}, h)));
+  const thead = el('thead'); thead.append(hr); const tb = el('tbody');
+  ['EXISTING_VIABLE','ORPHAN_ONLY','NO_MATCH'].forEach((st, i) => { const tr = el('tr'); tr.append(el('td', {}, st)); Q[i].forEach(q => tr.append(el('td', {}, fmt(q, 2)))); tb.append(tr); });
+  T.append(thead, tb);
+}
 function renderSteps(k){
   if(!ready()) return;
   const ol = $('#steps'); ol.replaceChildren();
@@ -651,7 +677,7 @@ const mean = a => a.reduce((s, x) => s + x, 0) / a.length;
 const sdev = a => { const m = mean(a); return Math.sqrt(a.reduce((s, x) => s + (x - m) ** 2, 0) / (a.length - 1)); };
 async function buildCompare(){
   const gs = S.idx.grupos.filter(g => g.n === S.n);
-  try { await Promise.all(gs.map(g => loadGroup(g.id))); } catch(e){ showError(e.message); return; }
+  try { await Promise.all(gs.map(g => loadGroup(g.id))); } catch(e){ showError(e.message); $('#cmp').replaceChildren(); return; }
   $('#cmpsub').textContent = `N = ${S.n} · média ± DP ao longo das 35 rodadas`;
   const sum = (r, key) => r.d[ci(key)].reduce((s, x) => s + x, 0);
   const rows = [
@@ -659,7 +685,7 @@ async function buildCompare(){
     ['SR final (t = 890 s)', r => r.d[ci('sr')][144], x => pct(x, 1)],
     ['QI mínimo na rodada', r => Math.min(...r.d[ci('qi')]), x => pct(x, 1)],
     ['pThreat médio na rodada', r => mean(r.d[ci('pt')]), x => fmt(x, 3)],
-    ['Órfãos (soma na rodada)', r => sum(r, 'orf'), x => fmt(x, 1)],
+    ['Órfãos-ciclo (soma dos órfãos de cada ciclo; um pendente conta a cada ciclo)', r => sum(r, 'orf'), x => fmt(x, 1)],
     ['REALLOCATE (soma na rodada)', r => sum(r, 'rea'), x => fmt(x, 1)],
     ['RECLUSTER (soma na rodada)', r => sum(r, 'rec'), x => fmt(x, 1)],
     ['DO_NOTHING (soma na rodada)', r => sum(r, 'dn'), x => fmt(x, 1)],
