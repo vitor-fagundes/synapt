@@ -1,0 +1,11 @@
+{
+  "name": "synapt-site-tools",
+  "private": true,
+  "description": "Teste de ponta a ponta do simulador web do SYNAPT (site/).",
+  "scripts": {
+    "e2e": "node test_site_e2e.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}
