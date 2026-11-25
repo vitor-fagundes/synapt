@@ -24,6 +24,7 @@
   --s1:light-dark(#257de0,#338ced);
   --s2:light-dark(#f47230,#e76624);
   --crit:#dc3c3d;
+  --aqua:light-dark(#00b894,#00a888);
   --warnbg:light-dark(#fff6e0,#2a2414);
   --warnline:light-dark(#e9c46a,#6b5a26);
   --errbg:light-dark(#fdecec,#2c1617);
@@ -116,8 +117,20 @@ input[type=range]{width:100%;accent-color:var(--sel);margin:6px 0 2px}
 .bar .b1{background:var(--s1)}.bar .b2{background:var(--s2)}
 .rows{margin-top:10px;font-size:14px;display:grid;grid-template-columns:auto auto;gap:4px 12px}
 .rows dt{color:var(--mut)}.rows dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
-.topo{margin-top:16px;border:1px dashed var(--line);border-radius:10px;padding:16px;text-align:center;color:var(--mut);font-size:14px;min-height:120px;display:flex;flex-direction:column;justify-content:center;gap:4px}
-.topo b{color:var(--ink);font-weight:600}
+.topocard{margin-top:16px}
+.topogrid{display:grid;grid-template-columns:minmax(0,640px) minmax(0,1fr);gap:20px;align-items:start}
+.cvwrap{position:relative;width:100%;max-width:640px}
+#cv{display:block;width:100%;height:auto;aspect-ratio:1/1;border:1px solid var(--line);border-radius:10px;background:var(--panel);touch-action:pan-y}
+.topomsg{border:1px dashed var(--line);border-radius:10px;padding:16px;text-align:center;color:var(--mut);font-size:14px;min-height:160px;display:flex;align-items:center;justify-content:center}
+#topowave{min-height:22px;font-size:13.5px;font-weight:600;color:var(--crit);margin-bottom:6px}
+#cvtip{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.5px;box-shadow:0 4px 14px rgba(0,0,0,.12);display:none;max-width:280px;line-height:1.45}
+#cvtip b{display:block;font-size:13.5px}
+.tleg{list-style:none;margin:0 0 10px;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px;font-size:13px}
+.tleg li{display:flex;align-items:center;gap:8px;min-width:0}
+.tleg svg{flex:none;width:20px;height:20px}
+.tleg .wide{grid-column:1/-1}
+#toposum{margin-top:8px}
+@media(max-width:980px){.topogrid{grid-template-columns:minmax(0,1fr)}}
 /* gráfico */
 .chartcard header{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;justify-content:space-between;margin-bottom:8px}
 #chart{position:relative}
@@ -228,7 +241,22 @@ footer{padding:28px 0;color:var(--mut);font-size:13px;border-top:1px solid var(-
           <dt>Limiar S1 / ξ do grupo</dt><dd id="thr">—</dd>
         </dl>
         <details id="qfim"><summary>Q-table ao fim da rodada</summary><div class="tblwrap"><table id="qtab"></table></div></details>
-        <div class="topo" id="topo"><b>Topologia</b><span>requer trace (Fase B)</span><span class="small">Nenhuma topologia é desenhada sem dados por nó.</span></div>
+      </div>
+    </div>
+    <div class="card topocard" id="topocard">
+      <h3>Topologia <small id="toposub">estado no início do ciclo; marcas = decisões deste ciclo</small></h3>
+      <div class="topogrid">
+        <div class="cvwrap">
+          <div id="topowave" aria-live="polite"></div>
+          <canvas id="cv" role="img" aria-label="Topologia da rede no início do ciclo"></canvas>
+          <div id="cvtip" role="status"></div>
+          <div class="topomsg" id="topomsg" hidden></div>
+        </div>
+        <div>
+          <ul class="tleg" id="tleg"></ul>
+          <p class="small mut">Estado no início do ciclo (o mesmo instante de QI, SR e pThreat); as marcas são as decisões deste ciclo, cujo resultado aparece no ciclo seguinte. Pertencimento a clusters novos não registrado no log: o órfão reclusterizado aparece sem ligação.</p>
+          <dl class="rows" id="toposum"></dl>
+        </div>
       </div>
     </div>
   </div>
@@ -281,6 +309,11 @@ footer{padding:28px 0;color:var(--mut);font-size:13px;border-top:1px solid var(-
     <p>O AP inicia em t = 10 s e seus agendamentos são relativos a esse início. Por isso o primeiro ciclo registrado é t = 170 s (145 ciclos, até 890 s), e as ondas configuradas para 300/450/600 s disparam em 310/460/610 s. No cenário aleatório, cada onda dispara no tempo sorteado + 10 s.</p>
     <h3>Quando cada métrica é registrada</h3>
     <p>QI, SR, pThreat, TII, ARF, ρ, aprendizado médio e Q médios são registrados na etapa 4, <b>antes</b> do processamento dos órfãos do ciclo. Por isso o ciclo da onda mostra a queda (ex.: QI ≈ 0,79) e o seguinte já mostra o efeito das ações. Os contadores de órfãos, ações e S1/S2 são os do próprio ciclo.</p>
+    <h3>Nós fora de cluster</h3>
+    <p>Na eleição inicial, cada nó escolhe um líder. Alguns elegem um nó que nunca vira líder: esses nós ficam fora de cluster desde o início, não são órfãos e não passam pelo mecanismo de recuperação. Isso explica SR &lt; 100% mesmo sem falhas. Se o nó eleito for promovido mais tarde a novo líder (recluster), quem o elegeu passa a ser membro do novo cluster.</p>
+    <h3>Topologia</h3>
+    <p>A topologia de cada rodada é reconstruída do <code>simulation.log</code>: eleição inicial, líderes, ondas de falha, decisão de cada órfão (estado, ação, sistema e destino) e novos líderes. As posições vêm da grade do <code>contaski.cc</code> e de N; o log só confirma a distância de cada nó ao AP. Uma rodada só tem trace se passar nas verificações: contagens por ciclo iguais às do CSV; round(SR × vivos) = vivos − órfãos − fora de cluster em todos os ciclos; membros e órfãos de cada líder que cai iguais aos registrados na onda; coerência dos reclusters e dos órfãos pendentes. Os membros de clusters formados por recluster não são registrados no log e não são inferidos.</p>
+    <p id="tracecount" class="small mut"></p>
     <h3>Parâmetros por grupo</h3>
     <div class="tblwrap"><table id="ptab"></table></div>
     <h3>Diferenças em relação ao README</h3>
@@ -310,7 +343,7 @@ python3 ns3 run --no-build "scratch/synapt/contaski --nNodes=200 --run=0 \
     <p>Para regenerar os dados deste site a partir de <code>results-synapt/</code> (o guard deixa a pasta sem escrita durante a execução):</p>
 <pre>tools/with_results_guard.sh python3 tools/build_site_data.py</pre>
     <h3>Carregar trace</h3>
-    <p>Nesta versão o botão aceita um <code>IntuitiveStats.csv</code> avulso (cabeçalho original de 18 colunas, timestamps crescentes, até 20 MiB). O arquivo é lido só no seu navegador e substitui a rodada exibida, apenas com as métricas. Traces JSON por nó chegam na Fase B.</p>
+    <p>Nesta versão o botão aceita um <code>IntuitiveStats.csv</code> avulso (cabeçalho original de 18 colunas, timestamps crescentes, até 20 MiB). O arquivo é lido só no seu navegador e substitui a rodada exibida, apenas com as métricas. O botão aceita só <code>IntuitiveStats.csv</code>; os traces de topologia são gerados por <code>tools/build_site_data.py</code> a partir do <code>simulation.log</code> de cada rodada.</p>
     <div class="drop">
       <input id="fi" type="file" accept=".csv,text/csv,.json,application/json" aria-label="Arquivo de trace">
       <button class="ib" id="ld" type="button">Carregar trace</button>
@@ -354,7 +387,7 @@ const STEPS = [
   ['Recluster coletivo','Os marcados para RECLUSTER são agrupados em ordem: cada órfão ainda livre puxa os seguintes com similaridade ≥ 0,85. O de mais capacidades (desempate pelo menor IP) vira líder; quem fica sozinho volta à lista de pendentes.'],
   ['Persistência e decaimento','QI/SR recalculados após as ações (esse valor não vai para o CSV); ε ← max(0,02; 0,97·ε) se houve órfãos; knowledge.dat salvo ao fim da rodada.'],
 ];
-const S = {idx:null, groups:{}, n:200, cen:'with', run:1, mean:false, k:0, playing:false, speed:1, metric:'qi', local:null, timer:null, stepTimer:null, stepNow:-1};
+const S = {traces:{}, trace:null, topoMsg:'', sel:0, idx:null, groups:{}, n:200, cen:'with', run:1, mean:false, k:0, playing:false, speed:1, metric:'qi', local:null, timer:null, stepTimer:null, stepNow:-1};
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // ---------------------------------------------------------------- erros e fetch
@@ -446,18 +479,23 @@ function syncControls(){
 }
 async function select(ch){
   stop();
+  const my = ++S.sel;
   if('n' in ch || 'cen' in ch || 'run' in ch) S.local = null;
   Object.assign(S, ch);
   if(!S.idx.grupos.some(g => g.n === S.n && g.cen === S.cen)) S.cen = 'with';
   try {
     if(!S.local){ await loadGroup(gmeta().id); }
-  } catch(e){ showError(e.message); clearPanels(); syncControls(); return; }
+  } catch(e){ if(my !== S.sel) return; showError(e.message); clearPanels(); syncControls(); return; }
+  if(my !== S.sel) return;
   $('#err').classList.remove('on');
+  await selectTrace(my);
+  if(my !== S.sel) return;
   if(S.k >= nc()) S.k = nc() - 1;
   syncControls(); renderNotes(); render(S.k); drawChart(); buildCompare();
 }
 
 function clearPanels(){
+  S.trace = null; S.topoMsg = 'Dados indisponíveis.'; drawTopo(0);
   ['#kpis','#cmp','#steps','#charttable','#legend','#qtab'].forEach(q => $(q).replaceChildren());
   document.querySelectorAll('#chart svg').forEach(e => e.remove()); CH = null;
   ['#s1c','#s2c','#accR','#accS','#eps','#thr','#s12txt'].forEach(q => $(q).textContent = '—');
@@ -553,6 +591,7 @@ function render(k){
   renderQ(m);
   renderSteps(k);
   moveCursor(k);
+  drawTopo(k);
 }
 function ready(){ return !!S.idx && (!!S.local || !!S.groups[(gmeta() || {}).id]); }
 function renderQ(m){
@@ -720,6 +759,8 @@ async function buildCompare(){
 
 // ---------------------------------------------------------------- método
 function buildMethod(){
+  const nt = (S.idx.traces || []).length, ns = (S.idx.sem_trace || []).length;
+  $('#tracecount').textContent = `Rodadas com trace: ${nt} de ${nt + ns}` + (ns ? `; ${ns} sem trace (motivo exibido ao selecionar a rodada).` : '; nenhuma rodada ficou sem trace.');
   const T = $('#ptab'); T.replaceChildren();
   const hr = el('tr'); ['Grupo','N','Cenário','Limiar S1','ξ','Override','Origem'].forEach(h => hr.append(el('th', {}, h)));
   const thead = el('thead'); thead.append(hr); const tb = el('tbody');
@@ -732,6 +773,211 @@ function buildMethod(){
   }
   U.append(el('li', {}, 'Limite da evidência: não há nos dados uma execução com outro --run que sirva de controle negativo.'));
   $('#commitinfo').textContent = `Dados gerados pelo commit ${S.idx.commit_codigo.slice(0, 12)} do repositório synapt (${S.idx.nota_commit}).`;
+}
+
+
+// ---------------------------------------------------------------- topologia (Fase B)
+const UNKNOWN = -2;
+const ROLE = {DEAD:0, ORPHAN:1, NEWLEADER:2, LEADER:3, RECL:4, REALLOC:5, MEMBER:6, OUTSIDER:7};
+const ROLE_KEYS = ['morto','orfao','novo_lider','lider','reclusterizado','realocado','membro','fora'];
+const ESTADOS = ['EXISTING_VIABLE','ORPHAN_ONLY','NO_MATCH'], ACOES = ['DO_NOTHING','REALLOCATE','RECLUSTER'], SISTEMAS = ['S1','S1+S2','S2'];
+const ipOf = i => 'fe80::ff:fe00:' + (i + 1).toString(16);
+function gridPos(n){ const sq = Math.ceil(Math.sqrt(40000 / n)), per = Math.ceil(200 / sq); const p = []; for(let i = 0; i < n; i++) p.push([(i % per) * sq, Math.floor(i / per) * sq]); return p; }
+function checkTrace(tr, f, meta, r){
+  const bad = c => { throw new Error(`data/${f}: trace em formato inesperado (${c})`); };
+  const isInt = (x, lo, hi) => Number.isInteger(x) && x >= lo && x < hi;
+  if(!tr || tr.model !== 'synapt' || tr.v !== 1) bad('model/v');
+  if(tr.g !== meta.id || tr.r !== r || tr.n !== meta.n || tr.nc !== 145) bad('g/r/n/nc');
+  const n = tr.n;
+  if(!Array.isArray(tr.lid0) || tr.lid0.length !== n || !tr.lid0.every(x => isInt(x, 0, n))) bad('lid0');
+  if(!Array.isArray(tr.lideres0) || !tr.lideres0.every(x => isInt(x, 0, n))) bad('lideres0');
+  if(!Array.isArray(tr.ondas) || !tr.ondas.every(w => isInt(w.k, 0, 145) && Number.isFinite(w.t) && Array.isArray(w.lf) && w.lf.every(x => isInt(x, 0, n)))) bad('ondas');
+  if(!Array.isArray(tr.ev)) bad('ev');
+  let last = -1;
+  for(const e of tr.ev){
+    if(!isInt(e.k, 0, 145) || e.k <= last) bad('ev[].k'); last = e.k;
+    if(!Array.isArray(e.o) || !e.o.every(o => Array.isArray(o) && o.length === 5 && isInt(o[0], 0, n) && isInt(o[1], 0, 3) && isInt(o[2], 0, 3) && isInt(o[3], 0, 3) && (o[2] === 1 ? isInt(o[4], 0, n) : o[4] === -1))) bad('ev[].o');
+    if(!Array.isArray(e.p) || !e.p.every(q => Array.isArray(q) && q.length === 2 && isInt(q[0], 0, n) && isInt(q[1], 0, 1e6))) bad('ev[].p');
+    if(!Array.isArray(e.pend) || !e.pend.every(x => isInt(x, 0, n))) bad('ev[].pend');
+  }
+}
+// Mesma máquina de estados de tools/trace_from_log.py (reconstruct): estado NO INÍCIO de cada ciclo.
+function buildStates(tr){
+  const n = tr.n, lid = Int32Array.from(tr.lid0), lead = new Uint8Array(n), dead = new Uint8Array(n), realoc = new Uint8Array(n);
+  for(const i of tr.lideres0) lead[i] = 1;
+  const wavesByK = {}; for(const w of tr.ondas) (wavesByK[w.k] ||= []).push(w);
+  const evByK = {}; for(const e of tr.ev) evByK[e.k] = e;
+  let pending = new Set();
+  const states = [];
+  for(let k = 0; k < tr.nc; k++){
+    for(const w of (wavesByK[k] || [])) for(const x of w.lf){ lead[x] = 0; dead[x] = 1; }
+    const e = evByK[k] || {o:[], p:[], pend:[]};
+    const dec = new Map(); for(const o of e.o) dec.set(o[0], o);
+    const roles = new Uint8Array(n);
+    for(let i = 0; i < n; i++){
+      let ro;
+      if(dead[i]) ro = ROLE.DEAD;
+      else if(dec.has(i)) ro = ROLE.ORPHAN;
+      else if(lead[i] === 2) ro = ROLE.NEWLEADER;
+      else if(lead[i] === 1) ro = ROLE.LEADER;
+      else if(lid[i] === UNKNOWN) ro = ROLE.RECL;
+      else if(lead[lid[i]] > 0 && !dead[lid[i]]) ro = realoc[i] ? ROLE.REALLOC : ROLE.MEMBER;
+      else ro = ROLE.OUTSIDER;
+      roles[i] = ro;
+    }
+    states.push({roles, lid: Int32Array.from(lid), dec, waves: wavesByK[k] || [], newl: e.p});
+    const cand = [];
+    let newp = new Set();
+    for(const [i, , a, , d] of e.o){ if(a === 1){ lid[i] = d; realoc[i] = 1; } else if(a === 2) cand.push(i); else newp.add(i); }
+    const newleaders = new Set(e.p.map(q => q[0]));
+    for(const x of newleaders){ lead[x] = 2; lid[x] = x; realoc[x] = 0; }
+    const fb = new Set(e.pend);
+    for(const i of cand){ if(newleaders.has(i) || fb.has(i)) continue; lid[i] = UNKNOWN; realoc[i] = 0; }
+    for(const i of fb) newp.add(i);
+    pending = newp;
+  }
+  return states;
+}
+async function selectTrace(my){
+  S.trace = null; S.topoMsg = '';
+  if(S.local){ S.topoMsg = 'A topologia requer um trace publicado; o arquivo local tem só as métricas.'; return; }
+  if(S.mean){ S.topoMsg = 'Topologia disponível por rodada: desative o modo média.'; return; }
+  const m = gmeta();
+  const sem = (S.idx.sem_trace || []).find(x => x.g === m.id && x.r === S.run);
+  if(sem){ S.topoMsg = `Rodada sem trace: ${sem.motivo}`; return; }
+  const ent = (S.idx.traces || []).find(x => x.g === m.id && x.r === S.run);
+  if(!ent){ S.topoMsg = 'Rodada sem trace publicado.'; return; }
+  try {
+    if(!S.traces[ent.f]){
+      const tr = await getJSON(`data/${ent.f}`);
+      checkTrace(tr, ent.f, m, S.run);
+      S.traces[ent.f] = {tr, states: buildStates(tr), pos: gridPos(tr.n)};
+    }
+    if(my === S.sel) S.trace = S.traces[ent.f];
+  } catch(e){ if(my === S.sel){ showError(e.message); S.topoMsg = 'Trace indisponível (ver a faixa de erro).'; } }
+}
+// cor resolvida (light-dark() aplicado) via elemento de sondagem; o canvas não entende light-dark()
+let PROBE = null;
+const cssv = name => { if(!PROBE){ PROBE = el('span', {'aria-hidden':'true', style:'position:absolute;width:0;height:0;overflow:hidden'}); document.body.append(PROBE); } PROBE.style.color = `var(${name})`; return getComputedStyle(PROBE).color || '#888'; };
+let TOPO = null;
+function drawTopo(k){
+  const cv = $('#cv'), msg = $('#topomsg'), sum = $('#toposum');
+  if(!S.trace || !S.trace.states[k]){
+    cv.hidden = true; msg.hidden = false; msg.textContent = S.topoMsg || 'Topologia indisponível.'; $('#topowave').textContent = '';
+    sum.replaceChildren(); sum.removeAttribute('data-k'); TOPO = null; $('#cvtip').style.display = 'none'; return;
+  }
+  cv.hidden = false; msg.hidden = true;
+  const {tr, states, pos} = S.trace, st = states[k], n = tr.n;
+  const W = Math.max(240, Math.round(cv.getBoundingClientRect().width || cv.parentElement.clientWidth || 300));
+  const dpr = window.devicePixelRatio || 1;
+  if(cv.width !== Math.round(W * dpr)){ cv.width = Math.round(W * dpr); cv.height = Math.round(W * dpr); }
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const C = {bg: cssv('--panel'), ink: cssv('--ink'), mut: cssv('--mut'), line: cssv('--line'), s1: cssv('--s1'), s2: cssv('--s2'), aqua: cssv('--aqua'), crit: cssv('--crit')};
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, W);
+  const lo = -10, hi = 220, sc = W / (hi - lo);
+  const X = p => (p[0] - lo) * sc, Y = p => (p[1] - lo) * sc;
+  const u = Math.max(0.75, W / 420);
+  const P = i => pos[i];
+  // ligações nó → líder (membros e realocados)
+  ctx.lineWidth = Math.max(0.6, 0.7 * u);
+  for(let i = 0; i < n; i++){
+    const ro = st.roles[i]; if(ro !== ROLE.MEMBER && ro !== ROLE.REALLOC) continue;
+    const j = st.lid[i]; ctx.strokeStyle = ro === ROLE.REALLOC ? C.aqua : C.line; ctx.globalAlpha = ro === ROLE.REALLOC ? 0.85 : 1;
+    ctx.beginPath(); ctx.moveTo(X(P(i)), Y(P(i))); ctx.lineTo(X(P(j)), Y(P(j))); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // decisões REALLOCATE deste ciclo: tracejado até o destino
+  ctx.setLineDash([4 * u, 3 * u]); ctx.lineWidth = 1.2 * u; ctx.strokeStyle = C.aqua;
+  for(const [i, , a, , d] of st.dec.values()){ if(a !== 1) continue; ctx.beginPath(); ctx.moveTo(X(P(i)), Y(P(i))); ctx.lineTo(X(P(d)), Y(P(d))); ctx.stroke(); }
+  ctx.setLineDash([]);
+  const circle = (x, y, r, fill, stroke, lw, dash) => { ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); if(fill){ ctx.fillStyle = fill; ctx.fill(); } if(stroke){ ctx.setLineDash(dash || []); ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); ctx.setLineDash([]); } };
+  const diamond = (x, y, r, fill, stroke, lw) => { ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); if(fill){ ctx.fillStyle = fill; ctx.fill(); } if(stroke){ ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); } };
+  const cross = (x, y, r, col, lw) => { ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath(); ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r); ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r); ctx.stroke(); };
+  for(let i = 0; i < n; i++){
+    const x = X(P(i)), y = Y(P(i)), ro = st.roles[i];
+    switch(ro){
+      case ROLE.MEMBER: circle(x, y, 2.2 * u, C.mut); break;
+      case ROLE.REALLOC: circle(x, y, 2.6 * u, C.aqua); break;
+      case ROLE.OUTSIDER: circle(x, y, 2.4 * u, null, C.mut, 1, [2, 2]); break;
+      case ROLE.RECL: diamond(x, y, 3.2 * u, C.bg, C.ink, 1.2 * u); break;
+      case ROLE.LEADER: circle(x, y, 4.6 * u, C.ink); break;
+      case ROLE.NEWLEADER: diamond(x, y, 5 * u, C.ink); circle(x, y, 7 * u, null, C.ink, 1); break;
+      case ROLE.DEAD: cross(x, y, 3.4 * u, C.crit, 1.8 * u); break;
+      case ROLE.ORPHAN: {
+        const [, , a, sis] = st.dec.get(i);
+        const ring = sis === 0 ? C.s1 : C.s2;
+        if(a === 1) circle(x, y, 2.6 * u, C.aqua); else if(a === 2) diamond(x, y, 3 * u, C.bg, C.ink, 1.1 * u); else circle(x, y, 2.2 * u, C.bg, C.mut, 1);
+        circle(x, y, 5.2 * u, null, ring, 1.6 * u);
+        break;
+      }
+    }
+  }
+  // onda de falha que antecede este ciclo
+  for(const w of st.waves){
+    for(const x0 of w.lf){ circle(X(P(x0)), Y(P(x0)), 8.5 * u, null, C.crit, 1.8 * u); }
+  }
+  // AP
+  const ax = X(tr.ap), ay = Y(tr.ap), s = 6 * u;
+  ctx.fillStyle = C.bg; ctx.fillRect(ax - s, ay - s, 2 * s, 2 * s); ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5 * u; ctx.strokeRect(ax - s, ay - s, 2 * s, 2 * s);
+  ctx.fillStyle = C.ink; ctx.font = `600 ${Math.round(10 * Math.max(1, u * 0.9))}px Inter, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('AP', ax, ay - s - 8 * u);
+  $('#topowave').textContent = st.waves.map(w => `Onda ${w.w} (t = ${fmt(w.t, w.t % 1 ? 1 : 0)} s): ${w.lf.length} líder(es) caíram antes deste ciclo`).join(' · ');
+  // resumo do ciclo (texto + data-* para conferência)
+  const cnt = {}; ROLE_KEYS.forEach(r => cnt[r] = 0);
+  for(let i = 0; i < n; i++) cnt[ROLE_KEYS[st.roles[i]]]++;
+  let s1 = 0, s2 = 0; for(const o of st.dec.values()) (o[3] === 0 ? s1++ : s2++);
+  sum.setAttribute('data-k', String(k));
+  ROLE_KEYS.forEach(r => sum.setAttribute('data-' + r.replace('_', '-'), String(cnt[r])));
+  sum.setAttribute('data-s1', String(s1)); sum.setAttribute('data-s2', String(s2));
+  sum.setAttribute('data-onda', st.waves.map(w => w.w).join(','));
+  sum.replaceChildren();
+  const row = (a, b) => sum.append(el('dt', {}, a), el('dd', {}, b));
+  row(`Início do ciclo ${k + 1} (t = ${fmt(tAt(k), 0)} s)`, st.waves.length ? st.waves.map(w => `onda ${w.w}`).join(', ') : '');
+  row('Líderes iniciais vivos / novos líderes', `${cnt.lider} / ${cnt.novo_lider}`);
+  row('Mortos', String(cnt.morto));
+  row('Órfãos (decididos por S1 / S2)', `${cnt.orfao} (${s1} / ${s2})`);
+  row('Membros / realocados', `${cnt.membro} / ${cnt.realocado}`);
+  row('Reclusterizados (cluster não registrado)', String(cnt.reclusterizado));
+  row('Fora de cluster', String(cnt.fora));
+  TOPO = {X, Y, P, st, n, W};
+}
+function buildTopoLegend(){
+  const U = $('#tleg'); U.replaceChildren();
+  const item = (draw, txt, wide) => { const li = el('li', wide ? {class:'wide'} : {}); const svg = sv('svg', {viewBox:'0 0 20 20', 'aria-hidden':'true'}); draw(svg); li.append(svg, el('span', {}, txt)); U.append(li); };
+  const c = (svg, r, a) => svg.append(sv('circle', Object.assign({cx:10, cy:10, r}, a)));
+  const dmd = (svg, r, a) => svg.append(sv('path', Object.assign({d:`M10 ${10 - r} L${10 + r} 10 L10 ${10 + r} L${10 - r} 10 Z`}, a)));
+  item(s => s.append(sv('rect', {x:4, y:4, width:12, height:12, fill:'var(--panel)', stroke:'var(--ink)', 'stroke-width':1.5})), 'AP');
+  item(s => c(s, 5, {fill:'var(--ink)'}), 'Líder');
+  item(s => { dmd(s, 5, {fill:'var(--ink)'}); c(s, 8, {fill:'none', stroke:'var(--ink)'}); }, 'Novo líder (recluster)');
+  item(s => { s.append(sv('line', {x1:2, y1:10, x2:18, y2:10, stroke:'var(--line)', 'stroke-width':1.5})); c(s, 2.5, {fill:'var(--mut)'}); }, 'Membro (linha até o líder)');
+  item(s => { s.append(sv('line', {x1:2, y1:10, x2:18, y2:10, stroke:'var(--aqua)', 'stroke-width':1.5})); c(s, 3, {fill:'var(--aqua)'}); }, 'Realocado (linha até o novo líder)');
+  item(s => dmd(s, 4, {fill:'var(--panel)', stroke:'var(--ink)', 'stroke-width':1.3}), 'Reclusterizado (sem linha)');
+  item(s => c(s, 3, {fill:'none', stroke:'var(--mut)', 'stroke-dasharray':'2 2'}), 'Fora de cluster');
+  item(s => s.append(sv('path', {d:'M6 6 L14 14 M14 6 L6 14', stroke:'var(--crit)', 'stroke-width':2})), 'Morto');
+  item(s => { c(s, 2.5, {fill:'var(--panel)', stroke:'var(--mut)'}); c(s, 7, {fill:'none', stroke:'var(--s1)', 'stroke-width':2}); }, 'Órfão decidido por S1 (anel azul)');
+  item(s => { c(s, 2.5, {fill:'var(--panel)', stroke:'var(--mut)'}); c(s, 7, {fill:'none', stroke:'var(--s2)', 'stroke-width':2}); }, 'Órfão decidido por S2 (anel laranja)');
+  item(s => { s.append(sv('line', {x1:1, y1:10, x2:19, y2:10, stroke:'var(--aqua)', 'stroke-width':1.5, 'stroke-dasharray':'3 2'})); c(s, 3, {fill:'var(--aqua)'}); }, 'Decisão REALLOCATE (tracejado até o destino); losango = RECLUSTER; vazio = DO_NOTHING', true);
+  item(s => c(s, 8, {fill:'none', stroke:'var(--crit)', 'stroke-width':2}), 'Líder derrubado pela onda que antecede este ciclo', true);
+}
+function initTopoHover(){
+  const cv = $('#cv'), tip = $('#cvtip');
+  const near = ev => {
+    if(!TOPO) return -1; const r = cv.getBoundingClientRect(); const px = (ev.clientX - r.left) * TOPO.W / r.width, py = (ev.clientY - r.top) * TOPO.W / r.height;
+    let best = -1, bd = 12 * 12; for(let i = 0; i < TOPO.n; i++){ const dx = TOPO.X(TOPO.P(i)) - px, dy = TOPO.Y(TOPO.P(i)) - py, d = dx * dx + dy * dy; if(d < bd){ bd = d; best = i; } } return best;
+  };
+  const NOMES = ['morto','órfão','novo líder','líder','reclusterizado (cluster não registrado)','realocado','membro','fora de cluster'];
+  cv.addEventListener('pointermove', ev => {
+    const i = near(ev); if(i < 0){ tip.style.display = 'none'; return; }
+    const st = TOPO.st, ro = st.roles[i], j = st.lid[i];
+    tip.replaceChildren(el('b', {}, `Nó ${i + 1} · ${ipOf(i)}`), el('div', {}, `Papel no início do ciclo: ${NOMES[ro]}`));
+    if(ro === ROLE.MEMBER || ro === ROLE.REALLOC) tip.append(el('div', {}, `Líder: nó ${j + 1}`));
+    if(ro === ROLE.OUTSIDER) tip.append(el('div', {}, `Elegeu o nó ${j + 1}, que não é líder`));
+    const d = st.dec.get(i);
+    if(d) tip.append(el('div', {}, `Decisão neste ciclo: ${ESTADOS[d[1]]} → ${ACOES[d[2]]} [${SISTEMAS[d[3]]}]` + (d[2] === 1 ? ` → nó ${d[4] + 1}` : '')));
+    tip.style.display = 'block';
+    const r = cv.getBoundingClientRect(); const x = (ev.clientX - r.left), y = (ev.clientY - r.top);
+    tip.style.left = Math.max(0, Math.min(r.width - tip.offsetWidth, x + 12)) + 'px'; tip.style.top = Math.max(0, Math.min(r.height - tip.offsetHeight, y + 12)) + 'px';
+  });
+  cv.addEventListener('pointerleave', () => { tip.style.display = 'none'; });
 }
 
 // ---------------------------------------------------------------- CSV local
@@ -758,12 +1004,13 @@ function fileMsg(txt, bad){ const m = $('#fmsg'); m.textContent = txt; m.classNa
 async function loadFile(){
   const f = $('#fi').files[0];
   if(!f){ fileMsg('Escolha um arquivo primeiro.', true); return; }
-  if(/\.json$/i.test(f.name)){ fileMsg('Traces JSON chegam na Fase B; nesta versão o botão aceita apenas IntuitiveStats.csv.', true); return; }
+  if(/\.json$/i.test(f.name)){ fileMsg('O botão aceita apenas IntuitiveStats.csv; os traces de topologia são gerados por tools/build_site_data.py.', true); return; }
   if(!/\.csv$/i.test(f.name)){ fileMsg('Formato não suportado: use um arquivo .csv (IntuitiveStats.csv).', true); return; }
   if(f.size > MAXB){ fileMsg(`Arquivo com ${fmt(f.size / 1048576, 1)} MiB; o limite é 20 MiB.`, true); return; }
   try {
     const parsed = parseLocalCsv(await f.text());
-    stop(); S.local = {name: f.name, ...parsed}; S.k = 0; S.mean = false;
+    stop(); S.sel++; S.local = {name: f.name, ...parsed}; S.k = 0; S.mean = false;
+    S.trace = null; S.topoMsg = 'A topologia requer um trace publicado; o arquivo local tem só as métricas.';
     syncControls(); renderNotes(); render(0); drawChart();
     fileMsg(`Carregado: ${f.name} (${parsed.t.length} ciclos). O replay acima mostra este arquivo.`);
     location.hash = '#sim';
@@ -771,7 +1018,7 @@ async function loadFile(){
 }
 
 // ---------------------------------------------------------------- tema
-function setTheme(mode){ document.documentElement.setAttribute('data-theme', mode); try { localStorage.setItem('synapt-theme', mode); } catch(e){} drawChart(); }
+function setTheme(mode){ document.documentElement.setAttribute('data-theme', mode); try { localStorage.setItem('synapt-theme', mode); } catch(e){} drawChart(); drawTopo(S.k); }
 function initTheme(){
   let saved = null; try { saved = localStorage.getItem('synapt-theme'); } catch(e){}
   if(saved === 'light' || saved === 'dark') document.documentElement.setAttribute('data-theme', saved);
@@ -788,7 +1035,9 @@ async function init(){
   try { S.idx = await getJSON('data/index.json'); checkIndex(S.idx); }
   catch(e){ showError(e.message); return; }
   buildControls(); buildMethod();
-  let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(drawChart, 120); });
+  let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { drawChart(); drawTopo(S.k); }, 120); });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { drawChart(); drawTopo(S.k); });
+  buildTopoLegend(); initTopoHover();
   await select({});
 }
 init();

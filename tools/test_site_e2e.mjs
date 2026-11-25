@@ -4,7 +4,7 @@
 // Sem playwright instalado em tools/, o teste é PULADO com aviso (código 0).
 // Serve site/ com python3 -m http.server em 127.0.0.1 e grava as capturas em
 // <dir-capturas> (fora de site/). Código de saída 1 se algum critério falhar.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,6 +53,18 @@ async function newPage(browser, opts, errors) {
   return { ctx, page };
 }
 const ready = page => page.waitForFunction(() => document.querySelectorAll('#kpis .kpi').length === 8 && document.querySelector('#cmp tbody tr'), null, { timeout: 15000 });
+const topoReady = page => page.waitForFunction(() => { const s = document.querySelector('#toposum'); return s && s.dataset.k !== undefined; }, null, { timeout: 15000 });
+function pyCounts(file) {
+  const r = spawnSync('python3', [path.join(HERE, 'trace_from_log.py'), '--counts', path.join(SITE, 'data', file)], { encoding: 'utf8' });
+  if (r.status !== 0) throw new Error('trace_from_log.py --counts falhou: ' + r.stderr);
+  return JSON.parse(r.stdout);
+}
+async function gotoRun(page, n, cen, run) {
+  await page.click(`#segN button[data-n="${n}"]`); await page.click(`#segC button[data-c="${cen}"]`);
+  if (await page.$eval('#mean', e => e.checked)) await page.uncheck('#mean');
+  await page.selectOption('#run', String(run));
+  await page.waitForFunction(([n, r]) => document.querySelector('#cyc').textContent.includes('rodada ' + r) && document.querySelector('#toposum').dataset.k !== undefined, [n, run], { timeout: 15000 });
+}
 
 let code = 0;
 try {
@@ -75,6 +87,9 @@ try {
         check(`${label}/${scheme}: sem rolagem horizontal`, sw[0] <= sw[1], `scrollWidth ${sw[0]} / innerWidth ${sw[1]}`);
       }
       await page.screenshot({ path: path.join(OUT, `${label}-${scheme}.png`), fullPage: true });
+      await page.evaluate(() => { document.querySelector('.top').style.position = 'static'; });
+      await (await page.$('#topocard')).screenshot({ path: path.join(OUT, `topologia-onda-${label}-${scheme}.png`) });
+      await page.evaluate(() => { document.querySelector('.top').style.position = ''; });
       await page.screenshot({ path: path.join(OUT, `${label}-${scheme}-topo.png`) });
       await ctx.close();
     }
@@ -109,7 +124,8 @@ try {
     await page.uncheck('#mean'); await page.selectOption('#run', '7'); await page.waitForTimeout(200);
     const wv2 = await page.$$eval('#chart .wv line', l => l.length);
     check('250 aleatório, rodada 7: 3 ondas marcadas', wv2 === 3, `${wv2} linhas`);
-    const disabled = await page.click('#segN button[data-n="200"]').then(() => page.$eval('#segC button[data-c="random"]', b => b.disabled));
+    await page.click('#segN button[data-n="200"]');
+    const disabled = await page.waitForFunction(() => document.querySelector('#segC button[data-c="random"]').disabled, null, { timeout: 5000 }).then(() => true, () => false);
     check('N=200: botão "falhas aleatórias" desabilitado', disabled);
     await page.click('#pp'); await page.waitForTimeout(1600); await page.click('#pp');
     const k = await page.$eval('#tl', e => +e.value);
@@ -137,9 +153,57 @@ try {
     await page.setInputFiles('#fi', { name: 'trace.json', mimeType: 'application/json', buffer: Buffer.from('{"model":"synapt"}') });
     await page.click('#ld'); await page.waitForTimeout(200);
     const msg3 = await page.textContent('#fmsg');
-    check('upload .json → mensagem da Fase B', msg3.includes('Fase B'), msg3);
+    check('upload .json → aceita só IntuitiveStats.csv; traces vêm do build_site_data.py', msg3.includes('apenas IntuitiveStats.csv') && msg3.includes('build_site_data.py'), msg3);
     await page.click('#localexit'); await page.waitForTimeout(200);
     check('sair do arquivo local volta aos dados publicados', !(await page.textContent('#cyc')).includes('arquivo local'));
+    await ctx.close();
+  }
+  // topologia (Fase B)
+  {
+    const { ctx, page } = await newPage(browser, { viewport: { width: 1366, height: 900 } }, errors);
+    await page.goto(BASE); await ready(page); await topoReady(page);
+    const painted = await page.$eval('#cv', cv => { const c = cv.getContext('2d'); const d = c.getImageData(0, 0, cv.width, cv.height).data; const bg = [d[0], d[1], d[2]]; let k = 0; for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]) > 60) k++; return k; });
+    check('canvas da topologia renderiza', painted > 2000, `${painted} pixels fora do fundo`);
+    await gotoRun(page, 200, 'with', 2);
+    await page.evaluate(() => { const t = document.querySelector('#tl'); t.value = 28; t.dispatchEvent(new Event('input')); });
+    const exp = pyCounts('trace_200_with_failures_r002.json')[28];
+    const ds = await page.$eval('#toposum', e => ({ ...e.dataset }));
+    const wave = await page.textContent('#topowave');
+    check('ciclo 29 (onda 1) de 200_with r2: onda em destaque e mortos/órfãos = Python', ds.onda === '1' && wave.includes('Onda 1') && +ds.morto === exp.morto && +ds.orfao === exp.orfao && exp.morto > 0, `${JSON.stringify(ds)} | ${wave}`);
+    await page.click('#next');
+    const after = await page.$eval('#toposum', e => ({ ...e.dataset }));
+    check('ciclo seguinte mostra o resultado (sem os órfãos da onda)', +after.orfao < +ds.orfao && after.onda === '', JSON.stringify(after));
+    const keys = [['morto', 'morto'], ['orfao', 'orfao'], ['novoLider', 'novo_lider'], ['lider', 'lider'], ['reclusterizado', 'reclusterizado'], ['realocado', 'realocado'], ['membro', 'membro'], ['fora', 'fora'], ['s1', 's1'], ['s2', 's2']];
+    for (const [n, cen, run] of [[200, 'with', 2], [250, 'with', 2], [250, 'random', 2], [300, 'with', 2], [200, 'with', 6]]) {
+      await gotoRun(page, n, cen, run);
+      const g = `${n}_${cen === 'random' ? 'random' : 'with'}_failures`;
+      const exp = pyCounts(`trace_${g}_r${String(run).padStart(3, '0')}.json`);
+      const got = await page.evaluate(() => { const t = document.querySelector('#tl'), out = []; for (let k = 0; k < 145; k++) { t.value = k; t.dispatchEvent(new Event('input')); out.push({ ...document.querySelector('#toposum').dataset }); } return out; });
+      let bad = 0, first = '';
+      for (let k = 0; k < 145; k++) for (const [a, b] of keys) if (+got[k][a] !== exp[k][b]) { bad++; if (!first) first = `k${k} ${a}: página ${got[k][a]} × Python ${exp[k][b]}`; }
+      check(`Python × página nos 145 ciclos: ${g} r${run}`, bad === 0, bad ? first : '145 ciclos × 10 contagens');
+    }
+    await page.check('#mean'); await page.waitForTimeout(300);
+    check('modo média: topologia "disponível por rodada"', (await page.textContent('#topomsg')).includes('disponível por rodada') && await page.$eval('#cv', c => c.hidden));
+    await ctx.close();
+  }
+  // rodada em sem_trace (simulada) e trace fora do schema (esperam faixa/aviso)
+  {
+    const { ctx, page } = await newPage(browser, { viewport: { width: 1366, height: 900 } }, null);
+    await page.route('**/data/index.json', async route => {
+      const r = await route.fetch(); const j = await r.json();
+      j.traces = j.traces.filter(x => !(x.g === '200_with_failures' && x.r === 3));
+      j.sem_trace = [...(j.sem_trace || []), { g: '200_with_failures', r: 3, motivo: 'teste de sem_trace' }];
+      await route.fulfill({ response: r, json: j });
+    });
+    await page.route('**/data/trace_200_with_failures_r004.json', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{"model":"synapt","v":1,"g":"200_with_failures","r":4,"n":200,"nc":145,"lid0":[1,2]}' }));
+    await page.goto(BASE); await ready(page);
+    await page.selectOption('#run', '3'); await page.waitForTimeout(400);
+    const m = await page.textContent('#topomsg');
+    check('rodada sem_trace mostra o aviso com o motivo', m.includes('Rodada sem trace: teste de sem_trace'), m);
+    await page.selectOption('#run', '4'); await page.waitForTimeout(400);
+    const e = await page.textContent('#errmsg');
+    check('trace fora do schema → faixa de erro e canvas vazio', e.includes('trace em formato inesperado') && await page.$eval('#cv', c => c.hidden), e);
     await ctx.close();
   }
   check('zero erros de console/pageerror nas páginas normais', errors.length === 0, errors.slice(0, 5).join(' | '));
