@@ -317,5 +317,42 @@ class GeneratorTests(unittest.TestCase):
         self.assertTrue(bsd.prefix_match(["x"] * 1000, ["x"] * 1200))
 
 
+class RoundTripTests(unittest.TestCase):
+    """Confere site/data/*.json publicado contra os CSV brutos de results-synapt/ (só leitura)."""
+
+    def test_site_data_matches_raw_csv(self):
+        import json
+        import statistics
+        out = os.path.join(REAL_ROOT, "site", "data")
+        if not os.path.isfile(os.path.join(out, "index.json")):
+            self.skipTest("site/data ainda não gerado")
+        with open(os.path.join(out, "index.json")) as f:
+            idx = json.load(f)
+        self.assertEqual((idx["t0"], idx["dt"], idx["nc"]), (170, 5, 145))
+        self.assertEqual(idx["cols"], bsd.COLS)
+        checked = 0
+        for meta in idx["grupos"]:
+            gid = meta["id"]
+            with open(os.path.join(out, f"{gid}.json")) as f:
+                g = json.load(f)
+            raw = [bsd.parse_stats(os.path.join(REAL_RESULTS, gid, f"run_{r:03d}", "IntuitiveStats.csv"))
+                   for r in range(1, 36)]
+            self.assertEqual(len(g["runs"]), 35)
+            for r, run in enumerate(g["runs"]):
+                for i, c in enumerate(bsd.COLS):
+                    tol = 0 if c in bsd.INT_COLS else 0.5 * 10 ** -bsd.DEC[c] + 1e-12
+                    for k in range(145):
+                        self.assertLessEqual(abs(run["d"][i][k] - raw[r][i][k]), tol,
+                                             f"{gid} r{r + 1} {c} ciclo {k}")
+                        checked += 1
+            for i, c in enumerate(bsd.COLS):
+                tol = 0.5 * 10 ** -bsd.DEC[c] + 1e-9
+                for k in range(145):
+                    vals = [raw[r][i][k] for r in range(35)]
+                    self.assertLessEqual(abs(g["agg"]["m"][i][k] - statistics.fmean(vals)), tol)
+                    self.assertLessEqual(abs(g["agg"]["sd"][i][k] - statistics.stdev(vals)), tol)
+        self.assertEqual(checked, 7 * 35 * 17 * 145)
+
+
 if __name__ == "__main__":
     unittest.main()

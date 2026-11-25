@@ -134,6 +134,7 @@ try {
     ['index.json com falha de rede', route => route.abort(), 'falha de rede'],
     ['index.json com HTTP 404', route => route.fulfill({ status: 404, body: 'x' }), 'HTTP 404'],
     ['index.json inválido', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{x' }), 'JSON inválido'],
+    ['index.json fora do schema', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{"v":1,"t0":170,"dt":5,"nc":145,"cols":[],"grupos":[]}' }), 'formato inesperado'],
   ]) {
     const { ctx, page } = await newPage(browser, { viewport: { width: 1366, height: 900 } }, null);
     await page.route('**/data/index.json', handler);
@@ -145,6 +146,27 @@ try {
     const kpis = await page.$$eval('#kpis .kpi', l => l.length);
     check(`${label} → nenhum dado exibido`, kpis === 0);
     if (label.includes('rede')) await page.screenshot({ path: path.join(OUT, 'erro-fetch.png') });
+    await ctx.close();
+  }
+  // grupo indisponível depois da carga inicial: faixa de erro, painéis vazios, sem pageerror
+  {
+    const errs = [];
+    const { ctx, page } = await newPage(browser, { viewport: { width: 1366, height: 900 } }, null);
+    page.on('pageerror', e => errs.push(e.message));
+    await page.route('**/data/300_no_failures.json', route => route.fulfill({ status: 404, body: 'x' }));
+    await page.goto(BASE); await ready(page);
+    await page.click('#segN button[data-n="300"]'); await page.click('#segC button[data-c="no"]');
+    await page.waitForSelector('#err.on', { timeout: 10000 }).catch(() => { });
+    await page.click('#next'); await page.click('#next'); await page.click('#pp'); await page.waitForTimeout(800); await page.click('#pp');
+    const txt = await page.textContent('#errmsg');
+    const kpis = await page.$$eval('#kpis .kpi', l => l.length);
+    check('grupo com HTTP 404 → faixa de erro com a URL', txt.includes('data/300_no_failures.json') && txt.includes('HTTP 404'), txt);
+    check('grupo com HTTP 404 → painéis vazios', kpis === 0, `${kpis} KPIs`);
+    check('grupo com HTTP 404 → nenhum pageerror ao navegar', errs.length === 0, errs.join(' | '));
+    await page.click('#segC button[data-c="with"]'); await page.waitForTimeout(300);
+    check('N=300 com falhas: tabela comparativa ainda acusa o 300_no_failures indisponível', (await page.textContent('#errmsg')).includes('300_no_failures'));
+    await page.click('#segN button[data-n="200"]'); await page.waitForTimeout(300);
+    check('voltar a N=200 (todos disponíveis) recupera a página', !(await page.$eval('#err', e => e.classList.contains('on'))) && (await page.$$eval('#kpis .kpi', l => l.length)) === 8);
     await ctx.close();
   }
   await browser.close();
