@@ -37,7 +37,8 @@ CSV_HEADER = ["timestamp", "qi", "sr", "tii", "arf", "meanRho", "netLearning", "
 COLS = ["qi", "sr", "tii", "arf", "rho", "nl", "pt", "orf", "rea", "rec", "dn",
         "s1", "s2", "an", "qd", "qr", "qc"]
 INT_COLS = {"orf", "rea", "rec", "dn", "s1", "s2", "an"}
-DEC = {c: (6 if c == "arf" else 4) for c in COLS}
+# pt com 6 casas: com 4, o arredondamento inverte pThreat > limiar S1 em 1 ciclo (250_random).
+DEC = {c: (6 if c in ("arf", "pt") else 4) for c in COLS}
 
 STATES = ["EXISTING_VIABLE", "ORPHAN_ONLY", "NO_MATCH"]
 ACTIONS = ["DO_NOTHING", "REALLOCATE_TO_EXISTING", "RECLUSTER_ORPHANS"]

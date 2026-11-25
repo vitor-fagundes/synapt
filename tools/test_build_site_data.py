@@ -353,6 +353,31 @@ class RoundTripTests(unittest.TestCase):
                     self.assertLessEqual(abs(g["agg"]["sd"][i][k] - statistics.stdev(vals)), tol)
         self.assertEqual(checked, 7 * 35 * 17 * 145)
 
+    def test_s1_iff_pthreat_above_group_threshold(self):
+        """Em todo ciclo com órfãos, todas as decisões são S1 sse pThreat > limiar S1 do grupo,
+        tanto no CSV bruto quanto no JSON publicado (o rótulo da página depende disso)."""
+        import json
+        out = os.path.join(REAL_ROOT, "site", "data")
+        if not os.path.isfile(os.path.join(out, "index.json")):
+            self.skipTest("site/data ainda não gerado")
+        with open(os.path.join(out, "index.json")) as f:
+            idx = json.load(f)
+        ip, io, i1 = (bsd.COLS.index(c) for c in ("pt", "orf", "s1"))
+        for meta in idx["grupos"]:
+            with open(os.path.join(out, meta["id"] + ".json")) as f:
+                g = json.load(f)
+            for r in range(1, 36):
+                raw = bsd.parse_stats(os.path.join(REAL_RESULTS, meta["id"], f"run_{r:03d}",
+                                                   "IntuitiveStats.csv"))
+                pub = g["runs"][r - 1]["d"]
+                for k in range(145):
+                    if raw[io][k] == 0:
+                        continue
+                    all_s1 = raw[i1][k] == raw[io][k]
+                    self.assertTrue(raw[i1][k] in (0, raw[io][k]), f"{meta['id']} r{r} ciclo {k}: misto")
+                    self.assertEqual(all_s1, raw[ip][k] > meta["thS1"], f"{meta['id']} r{r} ciclo {k} (bruto)")
+                    self.assertEqual(all_s1, pub[ip][k] > meta["thS1"], f"{meta['id']} r{r} ciclo {k} (JSON)")
+
 
 if __name__ == "__main__":
     unittest.main()
