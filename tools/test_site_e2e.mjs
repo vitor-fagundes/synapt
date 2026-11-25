@@ -170,6 +170,17 @@ try {
     const ds = await page.$eval('#toposum', e => ({ ...e.dataset }));
     const wave = await page.textContent('#topowave');
     check('ciclo 29 (onda 1) de 200_with r2: onda em destaque e mortos/órfãos = Python', ds.onda === '1' && wave.includes('Onda 1') && +ds.morto === exp.morto && +ds.orfao === exp.orfao && exp.morto > 0, `${JSON.stringify(ds)} | ${wave}`);
+    // tooltip: passa o ponteiro sobre um órfão do ciclo 29 (posição pela grade, como a página)
+    const trj = JSON.parse(readFileSync(path.join(SITE, 'data', 'trace_200_with_failures_r002.json'), 'utf8'));
+    const orf = trj.ev.find(e => e.k === 28).o[0][0];
+    const sq = Math.ceil(Math.sqrt(40000 / trj.n)), per = Math.ceil(200 / sq);
+    await page.$eval('#cv', e => e.scrollIntoView({ block: 'center', behavior: 'instant' })); await page.waitForTimeout(150);
+    const box = await (await page.$('#cv')).boundingBox();
+    const px = box.x + ((orf % per) * sq + 10) * box.width / 230, py = box.y + (Math.floor(orf / per) * sq + 10) * box.height / 230;
+    await page.mouse.move(px, py); await page.waitForTimeout(100);
+    const tip = await page.textContent('#cvtip');
+    check('tooltip do canvas mostra a decisão do órfão', tip.includes(`Nó ${orf + 1}`) && tip.includes('Decisão neste ciclo'), tip);
+    await page.mouse.move(0, 0);
     await page.click('#next');
     const after = await page.$eval('#toposum', e => ({ ...e.dataset }));
     check('ciclo seguinte mostra o resultado (sem os órfãos da onda)', +after.orfao < +ds.orfao && after.onda === '', JSON.stringify(after));

@@ -312,7 +312,7 @@ footer{padding:28px 0;color:var(--mut);font-size:13px;border-top:1px solid var(-
     <h3>Nós fora de cluster</h3>
     <p>Na eleição inicial, cada nó escolhe um líder. Alguns elegem um nó que nunca vira líder: esses nós ficam fora de cluster desde o início, não são órfãos e não passam pelo mecanismo de recuperação. Isso explica SR &lt; 100% mesmo sem falhas. Se o nó eleito for promovido mais tarde a novo líder (recluster), quem o elegeu passa a ser membro do novo cluster.</p>
     <h3>Topologia</h3>
-    <p>A topologia de cada rodada é reconstruída do <code>simulation.log</code>: eleição inicial, líderes, ondas de falha, decisão de cada órfão (estado, ação, sistema e destino) e novos líderes. As posições vêm da grade do <code>contaski.cc</code> e de N; o log só confirma a distância de cada nó ao AP. Uma rodada só tem trace se passar nas verificações: contagens por ciclo iguais às do CSV; round(SR × vivos) = vivos − órfãos − fora de cluster em todos os ciclos; membros e órfãos de cada líder que cai iguais aos registrados na onda; coerência dos reclusters e dos órfãos pendentes. Os membros de clusters formados por recluster não são registrados no log e não são inferidos.</p>
+    <p>A topologia de cada rodada é reconstruída do <code>simulation.log</code>: eleição inicial, líderes, ondas de falha, decisão de cada órfão (estado, ação, sistema e destino) e novos líderes. As posições vêm da grade do <code>contaski.cc</code> e de N; o log só confirma a distância de cada nó ao AP. Uma rodada só tem trace se passar nas verificações: contagens por ciclo iguais às do CSV; round(SR × vivos) = vivos − órfãos − fora de cluster em todos os ciclos; membros e órfãos de cada líder que cai iguais aos registrados na onda (para um novo líder, membros conhecidos mais os seguidores registrados no recluster); coerência dos reclusters e dos órfãos pendentes. Os membros de clusters formados por recluster não são registrados no log e não são inferidos.</p>
     <p id="tracecount" class="small mut"></p>
     <h3>Parâmetros por grupo</h3>
     <div class="tblwrap"><table id="ptab"></table></div>
@@ -788,10 +788,11 @@ function checkTrace(tr, f, meta, r){
   const isInt = (x, lo, hi) => Number.isInteger(x) && x >= lo && x < hi;
   if(!tr || tr.model !== 'synapt' || tr.v !== 1) bad('model/v');
   if(tr.g !== meta.id || tr.r !== r || tr.n !== meta.n || tr.nc !== 145) bad('g/r/n/nc');
+  if(!Array.isArray(tr.ap) || tr.ap.length !== 2 || !tr.ap.every(Number.isFinite)) bad('ap');
   const n = tr.n;
   if(!Array.isArray(tr.lid0) || tr.lid0.length !== n || !tr.lid0.every(x => isInt(x, 0, n))) bad('lid0');
   if(!Array.isArray(tr.lideres0) || !tr.lideres0.every(x => isInt(x, 0, n))) bad('lideres0');
-  if(!Array.isArray(tr.ondas) || !tr.ondas.every(w => isInt(w.k, 0, 145) && Number.isFinite(w.t) && Array.isArray(w.lf) && w.lf.every(x => isInt(x, 0, n)))) bad('ondas');
+  if(!Array.isArray(tr.ondas) || !tr.ondas.every(w => isInt(w.w, 1, 100) && isInt(w.k, 0, 145) && Number.isFinite(w.t) && Array.isArray(w.lf) && w.lf.every(x => isInt(x, 0, n)))) bad('ondas');
   if(!Array.isArray(tr.ev)) bad('ev');
   let last = -1;
   for(const e of tr.ev){
@@ -965,7 +966,7 @@ function initTopoHover(){
     let best = -1, bd = 12 * 12; for(let i = 0; i < TOPO.n; i++){ const dx = TOPO.X(TOPO.P(i)) - px, dy = TOPO.Y(TOPO.P(i)) - py, d = dx * dx + dy * dy; if(d < bd){ bd = d; best = i; } } return best;
   };
   const NOMES = ['morto','órfão','novo líder','líder','reclusterizado (cluster não registrado)','realocado','membro','fora de cluster'];
-  cv.addEventListener('pointermove', ev => {
+  const show = ev => {
     const i = near(ev); if(i < 0){ tip.style.display = 'none'; return; }
     const st = TOPO.st, ro = st.roles[i], j = st.lid[i];
     tip.replaceChildren(el('b', {}, `Nó ${i + 1} · ${ipOf(i)}`), el('div', {}, `Papel no início do ciclo: ${NOMES[ro]}`));
@@ -976,7 +977,9 @@ function initTopoHover(){
     tip.style.display = 'block';
     const r = cv.getBoundingClientRect(); const x = (ev.clientX - r.left), y = (ev.clientY - r.top);
     tip.style.left = Math.max(0, Math.min(r.width - tip.offsetWidth, x + 12)) + 'px'; tip.style.top = Math.max(0, Math.min(r.height - tip.offsetHeight, y + 12)) + 'px';
-  });
+  };
+  cv.addEventListener('pointermove', show);
+  cv.addEventListener('pointerdown', show);
   cv.addEventListener('pointerleave', () => { tip.style.display = 'none'; });
 }
 

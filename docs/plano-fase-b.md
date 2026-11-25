@@ -294,3 +294,21 @@ legenda: "canvas: após as ações do ciclo; métricas: antes".
 7. **Guard:** grava a permissão original de cada caminho (stat) e restaura a partir dela.
 8. **Seção Método:** nós que elegem um nó que nunca vira líder ficam fora de cluster desde o início; não são
    órfãos e não passam pelo mecanismo de recuperação; isso explica SR < 100% mesmo sem falhas.
+
+## Desvios na implementação (2026-11-25)
+
+- **Anel de órfão:** a cor indica o sistema que decidiu (azul S1, laranja S2), não âmbar. Todo órfão no início
+  do ciclo tem decisão no mesmo ciclo.
+- **Reclusterizado e novo líder** são losangos (vazado e cheio), não violeta: o violeta falhou no validador
+  all-pairs contra o azul do S1 nos dois modos. Só três matizes passam (azul, laranja, verde-água); o resto é
+  codificado por forma.
+- **Topologia** num cartão próprio de largura total abaixo do replay, não dentro do painel Dual-System.
+- **Verificação 6** usa igualdade (seguidores = RECLUSTER − pendentes − novos líderes), que é exata pelo código,
+  em vez de ≤.
+- **A2** roda em todas as ondas e também confere que elegíveis + ignorados = líderes vivos reconstruídos. Para
+  novos líderes, a regra é estrita: log = membros conhecidos + seguidores registrados em `Novo cluster`. Ela vale
+  em 1 188 conferências nas 245 rodadas.
+- **Tooltip** também responde a toque (`pointerdown`).
+
+Pendências:
+- A conferência Python × página compara contagens por papel, não o líder de cada nó.

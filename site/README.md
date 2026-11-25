@@ -35,7 +35,7 @@ tools/with_results_guard.sh python3 tools/build_site_data.py                # va
 O mesmo comando gera os traces de topologia (Fase B), um por rodada (`data/trace_<grupo>_r<NNN>.json`), a
 partir do `simulation.log`, com `tools/trace_from_log.py`. Uma rodada só ganha trace se passar nas verificações
 (contagens por ciclo iguais às do CSV, `round(SR × vivos)` = vivos − órfãos − fora de cluster, membros e órfãos de
-cada líder que cai, coerência de reclusters e pendentes); as demais entram em `index.json.sem_trace` com o motivo.
+cada líder que cai, incluindo os seguidores registrados de novos líderes, coerência de reclusters e pendentes); as demais entram em `index.json.sem_trace` com o motivo.
 Na geração atual: **245 de 245 rodadas com trace**.
 
 O gerador recusa:
