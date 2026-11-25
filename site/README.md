@@ -12,7 +12,7 @@ gerados por `tools/build_site_data.py`. O plano e as decisões estão em `docs/p
 - **`--run=0`:**
   - `200_no_failures`, `200_with_failures`, `250_no_failures`, `250_with_failures` e
     `300_no_failures`: o runner versionado `run_simulations.sh` (repositório sectional, commit
-    `c5e78e0`, em `scratch/sectional`) passa `--run=0`;
+    `c5e78e07ac2d60c63cd376e40f5ea574a628dc1c`, em `scratch/sectional`) passa `--run=0`;
   - `250_random_failures` e `300_with_failures`: `--run=0` declarado pelo autor (decisão registrada
     em 2026-11-25), consistente com a sequência idêntica de eventos do NS-3.
   - O gerador verifica isso em todas as rodadas (`run_evid_check` em `index.json`): o prefixo do
@@ -59,8 +59,9 @@ página mostra a faixa de erro. Use o servidor local.
 ## Publicar
 
 1. No GitHub: **Settings → Pages → Source: GitHub Actions**.
-2. O workflow `.github/workflows/pages.yml` publica **somente `site/`** a cada push em `synapt-v1`, ou
-   manualmente em **Actions → Pages → Run workflow**. `results-synapt/` (~1,6 GB) não vai para o
+2. O workflow `.github/workflows/pages.yml` publica **somente `site/`** a cada push em `synapt-v1`. O
+   disparo manual (**Actions → Pages → Run workflow**) só aparece depois que o `pages.yml` estiver na
+   branch padrão do repositório. `results-synapt/` (~1,6 GB) não vai para o
    Pages, que tem limite de 1 GB.
 3. Os caminhos do `fetch` são relativos (`data/index.json`, `data/<grupo>.json`) e batem com os
    arquivos publicados.
@@ -74,3 +75,8 @@ página mostra a faixa de erro. Use o servidor local.
 | `data/<grupo>.json` | 35 rodadas × 17 métricas × 145 ciclos, ondas reais por rodada, Q-table/ε/S1-S2 ao fim de cada rodada e média ± DP por ciclo |
 
 A topologia por nó (Fase B) ainda não está disponível. O painel correspondente mostra "requer trace".
+
+## Referência
+
+Interações e estrutura de seções inspiradas no INTUIRT
+(<https://github.com/carlosapepe/INTUIRT/tree/d135685>), sem reutilizar texto nem modelo.
