@@ -32,6 +32,12 @@ tools/with_results_guard.sh python3 tools/build_site_data.py --check-only   # s�
 tools/with_results_guard.sh python3 tools/build_site_data.py                # valida e publica em site/data
 ```
 
+O mesmo comando gera os traces de topologia (Fase B), um por rodada (`data/trace_<grupo>_r<NNN>.json`), a
+partir do `simulation.log`, com `tools/trace_from_log.py`. Uma rodada só ganha trace se passar nas verificações
+(contagens por ciclo iguais às do CSV, `round(SR × vivos)` = vivos − órfãos − fora de cluster, membros e órfãos de
+cada líder que cai, coerência de reclusters e pendentes); as demais entram em `index.json.sem_trace` com o motivo.
+Na geração atual: **245 de 245 rodadas com trace**.
+
 O gerador recusa:
 - `site/data` com arquivos desconhecidos ou não commitados;
 - `.site-build-tmp/` já existente;
@@ -42,8 +48,8 @@ Se a troca de `site/data` falhar, recupere com `git checkout -- site/data`.
 ## Testar
 
 ```bash
-# gerador (21 testes, num repositório de teste temporário; nada é gravado em results-synapt/ nem em site/)
-tools/with_results_guard.sh python3 -m unittest tools/test_build_site_data.py -v
+# gerador e parser de trace (num repositório de teste temporário; nada é gravado em results-synapt/ nem em site/)
+tools/with_results_guard.sh python3 -m unittest tools/test_build_site_data.py tools/test_trace_from_log.py -v
 
 # página: servidor local
 cd site && python3 -m http.server 8000      # abra http://localhost:8000
@@ -73,8 +79,10 @@ página mostra a faixa de erro. Use o servidor local.
 | `index.html` | Página única (HTML, CSS e JS inline; só as fontes Spectral e Inter vêm do Google Fonts) |
 | `data/index.json` | Grupos, parâmetros por grupo (limiar S1, ξ, origem, evidência do `--run=0`), `t0=170`, `dt=5`, `nc=145` |
 | `data/<grupo>.json` | 35 rodadas × 17 métricas × 145 ciclos, ondas reais por rodada, Q-table/ε/S1-S2 ao fim de cada rodada e média ± DP por ciclo |
+| `data/trace_<grupo>_r<NNN>.json` | Topologia da rodada: eleição inicial (`lid0`), líderes, ondas e, por ciclo, só as mudanças (decisão de cada órfão, novos líderes, pendentes). As posições são calculadas na página a partir da grade de `contaski.cc` e de N |
 
-A topologia por nó (Fase B) ainda não está disponível. O painel correspondente mostra "requer trace".
+O guard (`tools/with_results_guard.sh`) grava a permissão original de cada caminho de `results-synapt/`, aplica
+`chmod -R a-w` durante o comando e restaura exatamente as permissões gravadas no fim.
 
 ## Referência
 
